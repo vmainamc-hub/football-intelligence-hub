@@ -23,7 +23,7 @@ function MatchIntelligence() {
   if (query.isLoading) return <State title="Loading match intelligence" text="Ingesting the free historical evidence layer…" />;
   if (!fixture || !result || !reasoning) return <State title="Match not found" text="The fixture is not available in the current free feed." back />;
 
-  const save = () => { const top = Object.entries(result.probabilities).sort((a,b) => b[1]-a[1])[0]; savePrediction({ fixture: { home: fixture.home, away: fixture.away, date: fixture.date, league: fixture.league }, market: "1X2", selection: top[0] === "home" ? "HOME" : top[0] === "away" ? "AWAY" : "DRAW", probability: top[1], confidence: result.confidence, quality: result.quality, modelVersion: "free-v1" }); setSaved(true); };
+  const save = () => { savePrediction({ fixture: { ...fixture, result: fixture.result }, probabilities: result.probabilities, totals: result.totals, btts: result.btts, verdict: reasoning.decision, confidence: result.confidence, quality: result.quality, modelVersion: "free-v1" }); setSaved(true); };
 
   return <div className="min-h-screen">
     <header className="border-b border-border bg-background/90 px-5 py-5 backdrop-blur lg:px-10"><div className="mx-auto max-w-7xl">
