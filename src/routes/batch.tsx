@@ -1,3 +1,3 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ModulePage } from "@/components/gfi/module-page";
-export const Route = createFileRoute("/batch")({ component: () => <ModulePage title="Batch Intelligence Lab" eyebrow="PORTFOLIO ANALYSIS" description="Rank multiple fixtures as a portfolio. The architecture keeps individual match evidence separate before comparing model edge, conflict and data quality." stages={[{name:"Fixture resolution",detail:"Resolve exact home/away/date identity before analysis.",live:true},{name:"Independent match models",detail:"Run each fixture through the same transparent local engine.",live:true},{name:"Cross-match ranking",detail:"Compare probability edge, stability and evidence quality.",live:false},{name:"Portfolio risk controls",detail:"Avoid correlated or low-quality selections.",live:false}]} /> });
+import { BatchModule } from "@/components/gfi/functional-modules";
+export const Route = createFileRoute("/batch")({ component: BatchModule });
