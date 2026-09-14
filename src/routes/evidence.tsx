@@ -1,3 +1,3 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ModulePage } from "@/components/gfi/module-page";
-export const Route = createFileRoute("/evidence")({ component: () => <ModulePage title="Evidence Intelligence" eyebrow="SOURCE GRAPH" description="Track what the system actually knows. Missing domains remain visibly missing rather than being filled with generated claims." stages={[{name:"Fixture/results evidence",detail:"Free public historical results feed is the first source layer.",live:true},{name:"Source provenance",detail:"Every provider adapter should expose source, timestamp and freshness.",live:false},{name:"News and team intelligence",detail:"Optional adapters for press, injuries, suspensions and lineups.",live:false},{name:"Contradiction graph",detail:"Conflicting sources are retained and scored rather than silently merged.",live:false}]} /> });
+import { EvidenceModule } from "@/components/gfi/functional-modules";
+export const Route = createFileRoute("/evidence")({ component: EvidenceModule });
