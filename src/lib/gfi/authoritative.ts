@@ -23,6 +23,13 @@ export type EvidenceItem = {
   quality: number;
 };
 
+export type ActionablePrediction = {
+  market: "HOME" | "DRAW" | "AWAY" | "OVER 1.5" | "OVER 2.5" | "OVER 3.5" | "BTTS";
+  label: string;
+  probability: number;
+  strength: number;
+};
+
 export type AuthoritativeMatchAnalysis = IntelligenceResult & {
   analysisVersion: string;
   fixtureId: string;
@@ -34,6 +41,9 @@ export type AuthoritativeMatchAnalysis = IntelligenceResult & {
   risk: "LOW" | "MODERATE" | "HIGH" | "VERY HIGH";
   marketDivergence?: { available: boolean; home?: number; draw?: number; away?: number; note: string };
   decision: "HOME EDGE" | "DRAW LEAN" | "AWAY EDGE" | "NO STRONG EDGE" | "INSUFFICIENT INTELLIGENCE" | "HIGH MODEL CONFLICT";
+  finalPrediction: string;
+  predictedScore: string;
+  predictions: ActionablePrediction[];
   aiReasoningPacket: Record<string, unknown>;
 };
 
@@ -57,12 +67,10 @@ function poissonAt(lambda: number, k: number) {
 function outcomeFromGoals(h: number, a: number): "H" | "D" | "A" { return h > a ? "H" : h === a ? "D" : "A"; }
 
 function formEngine(home: TeamSnapshot, away: TeamSnapshot): EngineOutput {
-  const hp = ppg(home), ap = ppg(away);
-  const gap = hp - ap;
+  const hp = ppg(home), ap = ppg(away), gap = hp - ap;
   const homeProb = clamp(0.38 + gap * 0.075 + (home.recent.filter(x => x === "W").length - away.recent.filter(x => x === "L").length) * 0.012, .08, .82);
   const awayProb = clamp(0.27 - gap * 0.06 + (away.recent.filter(x => x === "W").length - home.recent.filter(x => x === "L").length) * 0.012, .08, .70);
-  const drawProb = clamp(1 - homeProb - awayProb, .10, .48);
-  const total = homeProb + drawProb + awayProb;
+  const drawProb = clamp(1 - homeProb - awayProb, .10, .48), total = homeProb + drawProb + awayProb;
   const probabilities = { home: homeProb / total, draw: drawProb / total, away: awayProb / total };
   return { id: "FORM", name: "Recent Form", version: "form-v2", signal: Math.abs(gap) >= .45 ? "SUPPORT" : "NEUTRAL", confidence: Math.round(clamp(.42 + Math.abs(gap) / 2.5) * 100), quality: Math.round(clamp(.35 + (home.played + away.played) / 30) * 100), probabilities, values: { homePPG: round(hp, 2), awayPPG: round(ap, 2), pointsGap: round(gap, 2) }, evidence: [`${home.team}: ${hp.toFixed(2)} PPG from ${home.played} matches.`, `${away.team}: ${ap.toFixed(2)} PPG from ${away.played} matches.`], limitations: home.played + away.played < 8 ? ["Recent sample is small."] : [] };
 }
@@ -80,8 +88,7 @@ function venueEngine(home: TeamSnapshot, away: TeamSnapshot): EngineOutput {
   const homeRate = home.homeOrAwayRate, awayRate = away.homeOrAwayRate;
   const homeProb = clamp(.43 + (homeRate - .5) * .28 - (awayRate - .5) * .10, .12, .76);
   const awayProb = clamp(.27 + (awayRate - .5) * .20 - (homeRate - .5) * .05, .10, .66);
-  const drawProb = clamp(1 - homeProb - awayProb, .12, .48);
-  const total = homeProb + drawProb + awayProb;
+  const drawProb = clamp(1 - homeProb - awayProb, .12, .48), total = homeProb + drawProb + awayProb;
   return { id: "VENUE", name: "Home / Away Venue", version: "venue-v2", signal: Math.abs(homeRate - awayRate) >= .20 ? "SUPPORT" : "NEUTRAL", confidence: Math.round(clamp(.45 + Math.abs(homeRate - awayRate)) * 100), quality: Math.round(clamp(.40 + (home.played + away.played) / 32) * 100), probabilities: { home: homeProb / total, draw: drawProb / total, away: awayProb / total }, values: { homeVenueWinRate: homeRate, awayVenueWinRate: awayRate }, evidence: [`Home venue win rate ${Math.round(homeRate * 100)}%.`, `Away venue win rate ${Math.round(awayRate * 100)}%.`], limitations: [] };
 }
 
@@ -174,10 +181,22 @@ export function analyzeAuthoritatively(fixture: MatchRow, allMatches: MatchRow[]
   const robustness: AuthoritativeMatchAnalysis["robustness"] = { score: robustnessScore, label: robustnessScore >= 78 ? "ROBUST" : robustnessScore >= 62 ? "STABLE" : robustnessScore >= 45 ? "FRAGILE" : "UNSTABLE" };
   const totals: Record<string, number> = { ...Object.fromEntries(Object.entries(totalsEngineOut.values).filter(([k]) => k.startsWith("over"))) };
   const btts = { yes: bttsOut.values.yes, no: bttsOut.values.no };
-  const warningsEvidence = warnings;
   const evidence = evidenceLedger.slice(0, 8).map(x => x.statement);
-  const aiReasoningPacket = { fixture, analysisVersion: "gfi-authoritative-v3", decision, probabilities, totals, btts, confidence, quality, consensus, robustness, risk, engines, evidence: evidenceLedger, warnings: warningsEvidence, instruction: "Synthesize only supplied evidence. Never invent missing facts, odds, injuries, lineups, xG, news or probabilities. Never override the authoritative decision without new verified evidence." };
-  return { home, away, probabilities, totals, btts, confidence, quality, verdict: decision, warnings, evidence, analysisVersion: "gfi-authoritative-v3", fixtureId: `${fixture.date}__${fixture.home}__${fixture.away}`, generatedAt: new Date().toISOString(), engines, evidenceLedger, consensus: { ...consensus.probabilities!, agreement, conflict, leader: top < .42 ? "none" : probabilities.home === top ? "home" : probabilities.draw === top ? "draw" : "away" }, robustness, risk, marketDivergence: { available: false, note: "No bookmaker odds are loaded in FREE MODE; no market edge is claimed." }, decision, aiReasoningPacket };
+  const scorelines = poissonScorelineProbabilities({ engines } as AuthoritativeMatchAnalysis);
+  const predictedScore = scorelines[0]?.score ?? "—";
+  const rawPredictions: ActionablePrediction[] = [
+    { market: "HOME", label: home.team, probability: probabilities.home, strength: Math.max(0, probabilities.home - 1 / 3) },
+    { market: "DRAW", label: "Draw", probability: probabilities.draw, strength: Math.max(0, probabilities.draw - 1 / 3) },
+    { market: "AWAY", label: away.team, probability: probabilities.away, strength: Math.max(0, probabilities.away - 1 / 3) },
+    { market: "OVER 1.5", label: "Over 1.5", probability: totals.over1.5, strength: Math.max(0, totals.over1.5 - .55) },
+    { market: "OVER 2.5", label: "Over 2.5", probability: totals.over2.5, strength: Math.max(0, totals.over2.5 - .50) },
+    { market: "OVER 3.5", label: "Over 3.5", probability: totals.over3.5, strength: Math.max(0, totals.over3.5 - .40) },
+    { market: "BTTS", label: "BTTS", probability: btts.yes, strength: Math.max(0, btts.yes - .50) },
+  ];
+  const predictions = rawPredictions.filter(p => p.probability >= (p.market === "OVER 1.5" ? .62 : p.market === "OVER 3.5" ? .55 : .57)).sort((a, b) => b.strength - a.strength).slice(0, 5);
+  const finalPrediction = decision === "HOME EDGE" ? `${home.team} win` : decision === "AWAY EDGE" ? `${away.team} win` : decision === "DRAW LEAN" ? "Draw" : (predictions[0]?.label ?? "No strong prediction");
+  const aiReasoningPacket = { fixture, analysisVersion: "gfi-authoritative-v4", decision, finalPrediction, predictedScore, probabilities, totals, btts, confidence, quality, consensus, robustness, risk, engines, evidence: evidenceLedger, predictions, instruction: "Return only actionable predictions and a concise final verdict. Never invent missing facts or override the quantitative analysis." };
+  return { home, away, probabilities, totals, btts, confidence, quality, verdict: decision, warnings, evidence, analysisVersion: "gfi-authoritative-v4", fixtureId: `${fixture.date}__${fixture.home}__${fixture.away}`, generatedAt: new Date().toISOString(), engines, evidenceLedger, consensus: { ...consensus.probabilities!, agreement, conflict, leader: top < .42 ? "none" : probabilities.home === top ? "home" : probabilities.draw === top ? "draw" : "away" }, robustness, risk, marketDivergence: { available: false, note: "No bookmaker odds are loaded in FREE MODE; no market edge is claimed." }, decision, finalPrediction, predictedScore, predictions, aiReasoningPacket };
 }
 
 export function scoreAuthoritativeAnalysis(a: AuthoritativeMatchAnalysis) {
