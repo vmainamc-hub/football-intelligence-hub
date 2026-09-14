@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { MatchRow } from "./intelligence";
 
-export type FixtureSourceName = "football-data" | "openfootball" | "global-live";
+export type FixtureSourceName = "football-data" | "openfootball" | "global-live" | "sportsdb";
 
 export type ExternalFixture = MatchRow & {
   source: FixtureSourceName;
@@ -11,6 +11,7 @@ export type ExternalFixture = MatchRow & {
 
 const OPENFOOTBALL_BASE = "https://raw.githubusercontent.com/openfootball/football.json/master";
 const GLOBAL_LIVE_BASE = "https://worldcup26.ir/get/soccer";
+const SPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3";
 const REQUEST_TIMEOUT_MS = 10_000;
 
 const OPENFOOTBALL_LEAGUES: Array<{ code: string; league: string; file: string }> = [
@@ -58,17 +59,9 @@ function parseOpenFootball(payload: unknown, league: string, sourceUrl: string):
     const ft = Array.isArray(score?.ft) ? score?.ft as unknown[] : undefined;
     const hg = typeof ft?.[0] === "number" ? ft[0] : undefined;
     const ag = typeof ft?.[1] === "number" ? ft[1] : undefined;
-    return [{
-      date: sourceDateKey(date),
-      home,
-      away,
-      hg,
-      ag,
+    return [{ date: sourceDateKey(date), home, away, hg, ag,
       result: hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
-      league,
-      source: "openfootball",
-      sourceId: `${sourceUrl}#${index}`,
-      sourceUpdatedAt: new Date().toISOString(),
+      league, source: "openfootball", sourceId: `${sourceUrl}#${index}`, sourceUpdatedAt: new Date().toISOString(),
     } satisfies ExternalFixture];
   });
 }
@@ -76,7 +69,8 @@ function parseOpenFootball(payload: unknown, league: string, sourceUrl: string):
 function parseGlobalLive(payload: unknown, league: string): ExternalFixture[] {
   if (!payload || typeof payload !== "object") return [];
   const root = payload as Record<string, unknown>;
-  const candidates = [root.fixtures, root.matches, root.events, root.data];
+  const data = root.data && typeof root.data === "object" ? root.data as Record<string, unknown> : undefined;
+  const candidates = [root.fixtures, root.matches, root.events, root.data, data?.fixtures, data?.matches, data?.events];
   const matches = candidates.find(Array.isArray) as unknown[] | undefined;
   if (!matches) return [];
   return matches.flatMap((raw, index) => {
@@ -93,18 +87,30 @@ function parseGlobalLive(payload: unknown, league: string): ExternalFixture[] {
     const score = item.score && typeof item.score === "object" ? item.score as Record<string, unknown> : undefined;
     const hg = typeof item.home_score === "number" ? item.home_score : typeof score?.home === "number" ? score.home : undefined;
     const ag = typeof item.away_score === "number" ? item.away_score : typeof score?.away === "number" ? score.away : undefined;
-    return [{
-      date: parsed.toISOString().slice(0, 10),
-      time: parsed.toISOString().slice(11, 16),
-      home,
-      away,
-      hg,
-      ag,
+    return [{ date: parsed.toISOString().slice(0, 10), time: parsed.toISOString().slice(11, 16), home, away, hg, ag,
       result: hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
-      league,
-      source: "global-live",
-      sourceId: String(item.id ?? item.event_id ?? index),
-      sourceUpdatedAt: new Date().toISOString(),
+      league, source: "global-live", sourceId: String(item.id ?? item.event_id ?? index), sourceUpdatedAt: new Date().toISOString(),
+    } satisfies ExternalFixture];
+  });
+}
+
+function parseSportsDb(payload: unknown): ExternalFixture[] {
+  if (!payload || typeof payload !== "object") return [];
+  const events = Array.isArray((payload as { events?: unknown }).events) ? (payload as { events: unknown[] }).events : [];
+  return events.flatMap((raw, index) => {
+    if (!raw || typeof raw !== "object") return [];
+    const item = raw as Record<string, unknown>;
+    const home = typeof item.strHomeTeam === "string" ? item.strHomeTeam : "";
+    const away = typeof item.strAwayTeam === "string" ? item.strAwayTeam : "";
+    const date = typeof item.dateEvent === "string" ? item.dateEvent : "";
+    if (!home || !away || !date) return [];
+    const time = typeof item.strTime === "string" ? item.strTime.slice(0, 5) : undefined;
+    const hg = typeof item.intHomeScore === "number" ? item.intHomeScore : undefined;
+    const ag = typeof item.intAwayScore === "number" ? item.intAwayScore : undefined;
+    return [{ date: sourceDateKey(date), time, home, away, hg, ag,
+      result: hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
+      league: typeof item.strLeague === "string" ? item.strLeague : "Worldwide Football",
+      source: "sportsdb", sourceId: String(item.idEvent ?? index), sourceUpdatedAt: new Date().toISOString(),
     } satisfies ExternalFixture];
   });
 }
@@ -129,6 +135,15 @@ export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
     }));
     for (const result of live) if (result.status === "fulfilled") results.push(...result.value);
 
+    // TheSportsDB's free V1 test endpoint is optional and non-fatal. It broadens discovery
+    // when the public endpoint is available; the app never depends on it for core operation.
+    try {
+      const response = await withTimeout(`${SPORTSDB_BASE}/eventsday.php?d=${data.dateFrom}&s=Soccer`, { headers: { Accept: "application/json" } });
+      if (response.ok) results.push(...parseSportsDb(await response.json()));
+    } catch {
+      // Optional source unavailable; keep all other fixture sources.
+    }
+
     return results.filter((match) => {
       const date = sourceDateKey(match.date);
       return date >= data.dateFrom && date <= data.dateTo;
@@ -136,11 +151,7 @@ export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
   });
 
 export function normalizeTeamName(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/\b(fc|afc|cf|sc|club|city|united)\b/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
+  return value.toLowerCase().replace(/\b(fc|afc|cf|sc|club|city|united)\b/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 export function fixtureIdentity(match: Pick<MatchRow, "date" | "home" | "away">) {
