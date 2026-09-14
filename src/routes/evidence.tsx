@@ -1,3 +1,3 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { EvidenceModule } from "@/components/gfi/functional-modules";
-export const Route = createFileRoute("/evidence")({ component: EvidenceModule });
+import { EvidenceLab } from "@/components/gfi/evidence-lab";
+export const Route = createFileRoute("/evidence")({ component: EvidenceLab });
