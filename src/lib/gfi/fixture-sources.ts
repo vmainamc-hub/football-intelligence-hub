@@ -3,11 +3,7 @@ import type { MatchRow } from "./intelligence";
 
 export type FixtureSourceName = "football-data" | "openfootball" | "global-live" | "sportsdb";
 
-export type ExternalFixture = MatchRow & {
-  source: FixtureSourceName;
-  sourceId?: string;
-  sourceUpdatedAt?: string;
-};
+export type ExternalFixture = MatchRow & { source: FixtureSourceName; sourceId?: string; sourceUpdatedAt?: string };
 
 const OPENFOOTBALL_BASE = "https://raw.githubusercontent.com/openfootball/football.json/master";
 const GLOBAL_LIVE_BASE = "https://worldcup26.ir/get/soccer";
@@ -55,11 +51,12 @@ function parseOpenFootball(payload: unknown, league: string, sourceUrl: string):
     const home = typeof item.team1 === "string" ? item.team1 : "";
     const away = typeof item.team2 === "string" ? item.team2 : "";
     if (!date || !home || !away) return [];
+    const time = typeof item.time === "string" ? item.time.slice(0, 5) : undefined;
     const score = item.score && typeof item.score === "object" ? item.score as Record<string, unknown> : undefined;
     const ft = Array.isArray(score?.ft) ? score?.ft as unknown[] : undefined;
     const hg = typeof ft?.[0] === "number" ? ft[0] : undefined;
     const ag = typeof ft?.[1] === "number" ? ft[1] : undefined;
-    return [{ date: sourceDateKey(date), home, away, hg, ag,
+    return [{ date: sourceDateKey(date), time, home, away, hg, ag,
       result: hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
       league, source: "openfootball", sourceId: `${sourceUrl}#${index}`, sourceUpdatedAt: new Date().toISOString(),
     } satisfies ExternalFixture];
@@ -119,7 +116,6 @@ export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
   .validator((input: { dateFrom: string; dateTo: string }) => input)
   .handler(async ({ data }): Promise<ExternalFixture[]> => {
     const results: ExternalFixture[] = [];
-
     const openfootball = await Promise.allSettled(OPENFOOTBALL_LEAGUES.map(async (entry) => {
       const response = await withTimeout(`${OPENFOOTBALL_BASE}/${entry.file}`, { headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error(`OpenFootball ${entry.file}: HTTP ${response.status}`);
@@ -135,8 +131,6 @@ export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
     }));
     for (const result of live) if (result.status === "fulfilled") results.push(...result.value);
 
-    // TheSportsDB's free V1 test endpoint is optional and non-fatal. It broadens discovery
-    // when the public endpoint is available; the app never depends on it for core operation.
     try {
       const response = await withTimeout(`${SPORTSDB_BASE}/eventsday.php?d=${data.dateFrom}&s=Soccer`, { headers: { Accept: "application/json" } });
       if (response.ok) results.push(...parseSportsDb(await response.json()));
