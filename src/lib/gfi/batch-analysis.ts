@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { loadFreeFixtures, type MatchRow } from "./intelligence";
+import { loadFreeFixturesInternal, type MatchRow } from "./intelligence";
 import { analyzeLoadedFixture, type ServerMatchAnalysis } from "./server-pipeline";
 
 export type BatchAnalysisRow = { fixture: MatchRow & { league: string; code: string; season: string }; analysis: ServerMatchAnalysis; score: number };
@@ -15,7 +15,7 @@ function actionableScore(analysis: ServerMatchAnalysis) {
 export const runBatchAnalysis = createServerFn({ method: "POST" })
   .validator((input: { limit?: number; includeUpcoming?: boolean }) => input)
   .handler(async ({ data }): Promise<BatchAnalysisRow[]> => {
-    const groups = await loadFreeFixtures();
+    const groups = await loadFreeFixturesInternal();
     const includeUpcoming = data.includeUpcoming !== false;
     const rows = groups.flatMap((group) => group.matches.filter((m) => includeUpcoming ? true : m.hg !== undefined && m.ag !== undefined).map((m) => ({ ...m, league: group.league, code: group.code, season: group.season })));
     const unique = new Map<string, MatchRow & { league: string; code: string; season: string }>();
