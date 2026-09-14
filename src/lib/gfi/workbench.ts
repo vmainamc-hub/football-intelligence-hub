@@ -1,66 +1,21 @@
 import { loadFreeFixtures, type MatchRow } from "@/lib/gfi/intelligence";
 import { analyzeAuthoritatively, poissonScorelineProbabilities, scoreAuthoritativeAnalysis, type AuthoritativeMatchAnalysis } from "@/lib/gfi/authoritative";
-
-export type FixtureGroup = { league: string; code: string; matches: MatchRow[] };
-export type ScoredFixture = MatchRow & { league: string; code?: string; score: number; verdict: string; quality: number; confidence: number; result: AuthoritativeMatchAnalysis };
-
-export async function loadWorkbench(): Promise<FixtureGroup[]> { return loadFreeFixtures(); }
-export function flattenCompleted(groups: FixtureGroup[]) { return groups.flatMap(g => g.matches.filter(m => m.hg !== undefined && m.ag !== undefined).map(m => ({ ...m, league: g.league, code: g.code }))); }
-
-/** Single authoritative pipeline used by every workbench module. */
-export function analyzeFixture(fixture: MatchRow, allMatches: MatchRow[]) { return analyzeAuthoritatively(fixture, allMatches); }
-
-export function rankBatch(groups: FixtureGroup[], limit = 24): ScoredFixture[] {
-  const all = flattenCompleted(groups), out: ScoredFixture[] = [];
-  for (const fixture of all.slice(-Math.max(limit * 4, 96))) {
-    const sameLeague = groups.find(g => g.code === fixture.code || g.league === fixture.league)?.matches ?? [];
-    const result = analyzeAuthoritatively(fixture, sameLeague);
-    out.push({ ...fixture, score: scoreAuthoritativeAnalysis(result), verdict: result.decision, quality: result.quality, confidence: result.confidence, result });
-  }
-  return out.sort((a,b) => b.score-a.score).slice(0, limit);
-}
-
-export type SimulationSummary = {
-  iterations:number; homeWin:number; draw:number; awayWin:number; over05:number; over15:number; over25:number; over35:number; btts:number;
-  expectedGoals:number; scenarioAgreement:number; topScores:{score:string;count:number;probability:number}[]; sourceAnalysisVersion:string;
-};
-
-function poisson(lambda:number){
-  const u=Math.random(); let p=Math.exp(-lambda), c=p, k=0;
-  while(u>c && k<12){ k++; p*=lambda/k; c+=p; }
-  return k;
-}
-
-export function simulateAnalysis(analysis:AuthoritativeMatchAnalysis, iterations=10000):SimulationSummary{
-  const goal=analysis.engines.find(e=>e.id==="GOALS");
-  const lh=Math.max(.05,goal?.values.lambdaHome??1.2), la=Math.max(.05,goal?.values.lambdaAway??1.0);
-  let h=0,d=0,a=0,o05=0,o15=0,o25=0,o35=0,b=0; const scores=new Map<string,number>();
-  for(let i=0;i<iterations;i++){
-    const hg=poisson(lh), ag=poisson(la), total=hg+ag;
-    if(hg>ag)h++; else if(hg===ag)d++; else a++;
-    if(total>=1)o05++; if(total>=2)o15++; if(total>=3)o25++; if(total>=4)o35++; if(hg>0&&ag>0)b++;
-    const key=`${hg}-${ag}`; scores.set(key,(scores.get(key)??0)+1);
-  }
-  return {iterations,homeWin:h/iterations,draw:d/iterations,awayWin:a/iterations,over05:o05/iterations,over15:o15/iterations,over25:o25/iterations,over35:o35/iterations,btts:b/iterations,expectedGoals:lh+la,scenarioAgreement:analysis.robustness.score/100,topScores:[...scores.entries()].sort((x,y)=>y[1]-x[1]).slice(0,8).map(([score,count])=>({score,count,probability:count/iterations})),sourceAnalysisVersion:analysis.analysisVersion};
-}
-
-export function simulateMatch(fixture:MatchRow,all:MatchRow[],iterations=10000){ return simulateAnalysis(analyzeAuthoritatively(fixture,all),iterations); }
-
-export type Prediction = {
-  id:string; createdAt:string; fixture:MatchRow & {league?:string;code?:string};
-  analysisVersion:string; probabilities:AuthoritativeMatchAnalysis["probabilities"]; totals:AuthoritativeMatchAnalysis["totals"]; btts:AuthoritativeMatchAnalysis["btts"];
-  verdict:string; decision:AuthoritativeMatchAnalysis["decision"]; confidence:number; quality:number;
-  consensus:AuthoritativeMatchAnalysis["consensus"]; robustness:AuthoritativeMatchAnalysis["robustness"]; risk:AuthoritativeMatchAnalysis["risk"];
-  evidence:AuthoritativeMatchAnalysis["evidenceLedger"]; engineIds:string[]; status:"OPEN"|"SETTLED"; outcome?:"H"|"D"|"A"; correct?:boolean;
-};
-
+export type FixtureGroup={league:string;code:string;matches:MatchRow[]};
+export type ScoredFixture=MatchRow&{league:string;code?:string;score:number;verdict:string;quality:number;confidence:number;result:AuthoritativeMatchAnalysis};
+export async function loadWorkbench():Promise<FixtureGroup[]>{return loadFreeFixtures();}
+export function flattenCompleted(groups:FixtureGroup[]){return groups.flatMap(g=>g.matches.filter(m=>m.hg!==undefined&&m.ag!==undefined).map(m=>({...m,league:g.league,code:g.code})));}
+export function analyzeFixture(fixture:MatchRow,allMatches:MatchRow[]){return analyzeAuthoritatively(fixture,allMatches);}
+export function rankBatch(groups:FixtureGroup[],limit=24):ScoredFixture[]{const all=flattenCompleted(groups),out:ScoredFixture[]=[];for(const fixture of all.slice(-Math.max(limit*4,96))){const sameLeague=groups.find(g=>g.code===fixture.code||g.league===fixture.league)?.matches??[];const result=analyzeAuthoritatively(fixture,sameLeague);out.push({...fixture,score:scoreAuthoritativeAnalysis(result),verdict:result.decision,quality:result.quality,confidence:result.confidence,result});}return out.sort((a,b)=>b.score-a.score).slice(0,limit);}
+export type SimulationSummary={iterations:number;homeWin:number;draw:number;awayWin:number;over05:number;over15:number;over25:number;over35:number;btts:number;expectedGoals:number;scenarioAgreement:number;topScores:{score:string;count:number;probability:number}[];sourceAnalysisVersion:string};
+function poisson(lambda:number){const u=Math.random();let p=Math.exp(-lambda),c=p,k=0;while(u>c&&k<12){k++;p*=lambda/k;c+=p;}return k;}
+export function simulateAnalysis(analysis:AuthoritativeMatchAnalysis,iterations=10000):SimulationSummary{const goal=analysis.engines.find(e=>e.id==="GOALS"),lh=Math.max(.05,goal?.values.lambdaHome??1.2),la=Math.max(.05,goal?.values.lambdaAway??1);let h=0,d=0,a=0,o05=0,o15=0,o25=0,o35=0,b=0;const scores=new Map<string,number>();for(let i=0;i<iterations;i++){const hg=poisson(lh),ag=poisson(la),t=hg+ag;if(hg>ag)h++;else if(hg===ag)d++;else a++;if(t>=1)o05++;if(t>=2)o15++;if(t>=3)o25++;if(t>=4)o35++;if(hg>0&&ag>0)b++;const key=`${hg}-${ag}`;scores.set(key,(scores.get(key)??0)+1);}return{iterations,homeWin:h/iterations,draw:d/iterations,awayWin:a/iterations,over05:o05/iterations,over15:o15/iterations,over25:o25/iterations,over35:o35/iterations,btts:b/iterations,expectedGoals:lh+la,scenarioAgreement:analysis.robustness.score/100,topScores:[...scores.entries()].sort((x,y)=>y[1]-x[1]).slice(0,8).map(([score,count])=>({score,count,probability:count/iterations})),sourceAnalysisVersion:analysis.analysisVersion};}
+export function simulateMatch(fixture:MatchRow,all:MatchRow[],iterations=10000){return simulateAnalysis(analyzeAuthoritatively(fixture,all),iterations);}
+export type Prediction={id:string;createdAt:string;fixture:MatchRow&{league?:string;code?:string};analysisVersion:string;probabilities:AuthoritativeMatchAnalysis["probabilities"];totals:AuthoritativeMatchAnalysis["totals"];btts:AuthoritativeMatchAnalysis["btts"];verdict:string;decision:AuthoritativeMatchAnalysis["decision"];confidence:number;quality:number;consensus:AuthoritativeMatchAnalysis["consensus"];robustness:AuthoritativeMatchAnalysis["robustness"];risk:AuthoritativeMatchAnalysis["risk"];evidence:AuthoritativeMatchAnalysis["evidenceLedger"];engineIds:string[];status:"OPEN"|"SETTLED";outcome?:"H"|"D"|"A";correct?:boolean};
 const LEDGER_KEY="gfi_prediction_ledger_v2";
-function migrateLegacy():Prediction[]{
-  try { const raw=JSON.parse(localStorage.getItem("gfi_prediction_ledger_v1")??"[]"); return raw.map((p:any)=>({...p,analysisVersion:p.modelVersion??"legacy",decision:p.verdict??"NO STRONG EDGE",consensus:{home:p.probabilities?.home??0,draw:p.probabilities?.draw??0,away:p.probabilities?.away??0,agreement:0,conflict:1,leader:"none"},robustness:{score:p.quality??0,label:"FRAGILE"},risk:"HIGH",evidence:[],engineIds:[]})); } catch { return []; }
-}
-export function readLedger():Prediction[]{ try { const current=JSON.parse(localStorage.getItem(LEDGER_KEY)??"[]"); return current.length?current:migrateLegacy(); } catch { return []; } }
-export function savePrediction(p:Omit<Prediction,"id"|"createdAt"|"status">){ const row:Prediction={...p,id:crypto.randomUUID(),createdAt:new Date().toISOString(),status:"OPEN"}; localStorage.setItem(LEDGER_KEY,JSON.stringify([row,...readLedger()].slice(0,500))); return row; }
-export function saveAuthoritativePrediction(analysis:AuthoritativeMatchAnalysis){ return savePrediction({fixture:{...analysis.home?{home:analysis.home.team,away:analysis.away.team}:{} as any},analysisVersion:analysis.analysisVersion,probabilities:analysis.probabilities,totals:analysis.totals,btts:analysis.btts,verdict:analysis.verdict,decision:analysis.decision,confidence:analysis.confidence,quality:analysis.quality,consensus:analysis.consensus,robustness:analysis.robustness,risk:analysis.risk,evidence:analysis.evidenceLedger,engineIds:analysis.engines.map(e=>e.id)}); }
-export function settlePrediction(id:string,outcome:"H"|"D"|"A"){ const ledger=readLedger().map(p=>p.id===id?{...p,status:"SETTLED" as const,outcome,correct:outcome===p.fixture.result}:p); localStorage.setItem(LEDGER_KEY,JSON.stringify(ledger)); return ledger; }
+function migrateLegacy():Prediction[]{try{const raw=JSON.parse(localStorage.getItem("gfi_prediction_ledger_v1")??"[]");return raw.map((p:any)=>({...p,analysisVersion:p.modelVersion??"legacy",decision:p.verdict??"NO STRONG EDGE",consensus:{home:p.probabilities?.home??0,draw:p.probabilities?.draw??0,away:p.probabilities?.away??0,agreement:0,conflict:1,leader:"none"},robustness:{score:p.quality??0,label:"FRAGILE"},risk:"HIGH",evidence:[],engineIds:[]}));}catch{return[];}}
+export function readLedger():Prediction[]{try{const current=JSON.parse(localStorage.getItem(LEDGER_KEY)??"[]");return current.length?current:migrateLegacy();}catch{return[];}}
+export function savePrediction(p:Omit<Prediction,"id"|"createdAt"|"status">){const row:Prediction={...p,id:crypto.randomUUID(),createdAt:new Date().toISOString(),status:"OPEN"};localStorage.setItem(LEDGER_KEY,JSON.stringify([row,...readLedger()].slice(0,500)));return row;}
+export function saveAuthoritativePrediction(analysis:AuthoritativeMatchAnalysis,fixture:MatchRow&{league?:string;code?:string}){return savePrediction({fixture,analysisVersion:analysis.analysisVersion,probabilities:analysis.probabilities,totals:analysis.totals,btts:analysis.btts,verdict:analysis.verdict,decision:analysis.decision,confidence:analysis.confidence,quality:analysis.quality,consensus:analysis.consensus,robustness:analysis.robustness,risk:analysis.risk,evidence:analysis.evidenceLedger,engineIds:analysis.engines.map(e=>e.id)});}
+export function settlePrediction(id:string,outcome:"H"|"D"|"A"){const ledger=readLedger().map(p=>p.id===id?{...p,status:"SETTLED" as const,outcome,correct:outcome===p.fixture.result}:p);localStorage.setItem(LEDGER_KEY,JSON.stringify(ledger));return ledger;}
 export function clearLedger(){localStorage.removeItem(LEDGER_KEY);}
-export { poissonScorelineProbabilities };
+export {poissonScorelineProbabilities};
