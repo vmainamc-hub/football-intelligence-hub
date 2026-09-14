@@ -1,3 +1,3 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ModulePage } from "@/components/gfi/module-page";
-export const Route = createFileRoute("/audit")({ component: () => <ModulePage title="Post-Match Audit" eyebrow="LEARNING LOOP" description="After the result, explain where the model was right, wrong, overconfident or operating with insufficient evidence." stages={[{name:"Prediction vs outcome",detail:"Compare each stored probability with the settled event.",live:false},{name:"Error decomposition",detail:"Separate data error, model error, variance and market disagreement.",live:false},{name:"Evidence audit",detail:"Identify which pre-match signals actually mattered.",live:false},{name:"Feedback to model lab",detail:"Feed settled observations into calibration and drift analysis.",live:false}]} /> });
+import { AuditModule } from "@/components/gfi/functional-modules";
+export const Route = createFileRoute("/audit")({ component: AuditModule });
