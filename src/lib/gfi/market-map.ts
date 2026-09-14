@@ -25,47 +25,45 @@ function bttsProbability(result: AuthoritativeMatchAnalysis) {
 
 export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): MarketSignal[] {
   const { home, draw, away } = result.probabilities;
+  const winner = home >= draw && home >= away ? result.home.team : away >= draw ? result.away.team : "DRAW";
+  const winnerProbability = Math.max(home, draw, away);
   const ordered = [
-    { selection: result.finalPrediction.includes(result.fixtureId) ? result.finalPrediction : home >= away && home >= draw ? "HOME WIN" : away >= home && away >= draw ? "AWAY WIN" : "DRAW", probability: Math.max(home, draw, away) },
+    { selection: winner === "DRAW" ? "DRAW" : `${winner} WIN`, probability: winnerProbability },
     { selection: "1X", probability: home + draw },
     { selection: "X2", probability: draw + away },
     { selection: "12", probability: home + away },
   ];
 
-  const top = ordered[0];
-  const confidence = result.confidence;
-  const map: MarketSignal[] = [
-    {
-      market: "1X2",
-      selection: top.selection,
-      probability: top.probability,
-      confidence,
-      tier: "PRIMARY",
-      rationale: `Highest core 1X2 probability: ${pct(top.probability)}%.`,
-    },
-  ];
+  const map: MarketSignal[] = [{
+    market: "1X2",
+    selection: ordered[0].selection,
+    probability: ordered[0].probability,
+    confidence: result.confidence,
+    tier: "PRIMARY",
+    rationale: `Highest core 1X2 probability: ${pct(ordered[0].probability)}%.`,
+  }];
 
   const doubleChance = ordered.slice(1).sort((a, b) => b.probability - a.probability)[0];
   map.push({
     market: "DOUBLE CHANCE",
     selection: doubleChance.selection,
     probability: doubleChance.probability,
-    confidence: Math.round((confidence + pct(doubleChance.probability)) / 2),
+    confidence: Math.round((result.confidence + pct(doubleChance.probability)) / 2),
     tier: "SECONDARY",
-    rationale: `Covers two of the three full-time outcomes; model coverage is ${pct(doubleChance.probability)}%.`,
+    rationale: `Two-result coverage at ${pct(doubleChance.probability)}% model probability.`,
   });
 
   const dnbHome = home / Math.max(0.0001, home + away);
   const dnbAway = away / Math.max(0.0001, home + away);
-  const dnbSelection = dnbHome >= dnbAway ? `DRAW NO BET — ${result.home}` : `DRAW NO BET — ${result.away}`;
+  const dnbSelection = dnbHome >= dnbAway ? `DNB — ${result.home.team}` : `DNB — ${result.away.team}`;
   const dnbProbability = Math.max(dnbHome, dnbAway);
   map.push({
     market: "DRAW NO BET",
     selection: dnbSelection,
     probability: dnbProbability,
-    confidence: Math.round((confidence + pct(dnbProbability)) / 2),
+    confidence: Math.round((result.confidence + pct(dnbProbability)) / 2),
     tier: "SECONDARY",
-    rationale: "Draw is removed from the win probability comparison; the stronger side becomes the DNB lean.",
+    rationale: "Draw is removed from the win comparison; the stronger side becomes the DNB lean.",
   });
 
   const over25 = goalProbability(result, "over2.5");
