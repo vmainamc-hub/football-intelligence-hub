@@ -1,4 +1,5 @@
 import { fetchFreeLeagueCsv } from "./free-data";
+import { fetchGlobalFallbackFixtures, fixtureIdentity, type ExternalFixture } from "./fixture-sources";
 import { analyzeAuthoritatively } from "./authoritative";
 
 export type MatchRow = {
@@ -11,6 +12,8 @@ export type MatchRow = {
   result?: "H" | "D" | "A";
   league?: string;
   code?: string;
+  source?: string;
+  sourceId?: string;
 };
 
 export type TeamSnapshot = {
@@ -102,8 +105,35 @@ function parseCsv(text: string): MatchRow[] {
       hg: Number.isFinite(hg) ? hg : undefined,
       ag: Number.isFinite(ag) ? ag : undefined,
       result: result === "H" || result === "D" || result === "A" ? result : undefined,
+      source: "football-data",
     } satisfies MatchRow;
   }).filter((match) => match.home && match.away);
+}
+
+function kenyaDateKey(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+function addDays(dateKey: string, days: number) {
+  const value = new Date(`${dateKey}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function sourceDateKey(value: string) {
+  const m = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (!m) return value;
+  const year = m[3].length === 2 ? Number(m[3]) + 2000 : Number(m[3]);
+  return `${year.toString().padStart(4, "0")}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+}
+
+function mergeFallback(group: FreeLeague, fallback: ExternalFixture[]) {
+  const identities = new Set(group.matches.map(fixtureIdentity));
+  const additions = fallback
+    .filter((match) => match.league === group.league)
+    .filter((match) => !identities.has(fixtureIdentity(match)))
+    .map((match) => ({ ...match, code: group.code }));
+  return { ...group, matches: [...group.matches, ...additions] };
 }
 
 export async function loadFreeFixtures(): Promise<FreeLeague[]> {
@@ -115,23 +145,23 @@ export async function loadFreeFixtures(): Promise<FreeLeague[]> {
     if (!matches.length) throw new Error(`${league} returned no usable matches`);
     return { league, code, season: payload.season, matches, sourceUrl: payload.sourceUrl, fetchedAt: payload.fetchedAt } satisfies FreeLeague;
   }));
-  const loaded = settled.flatMap((item) => item.status === "fulfilled" ? [item.value] : []);
+  let loaded = settled.flatMap((item) => item.status === "fulfilled" ? [item.value] : []);
   if (!loaded.length) {
     const failures = settled.filter((item): item is PromiseRejectedResult => item.status === "rejected").map((item, index) => `${entries[index]?.[0] ?? "unknown"}: ${String(item.reason)}`).join("; ");
     throw new Error(`FREE football data feed unavailable for season ${season}. ${failures}`);
   }
+
+  // Football-Data remains the statistical backbone. Fallback sources only add missing fixtures,
+  // so the authoritative prediction engine and its historical calculations remain unchanged.
+  const today = kenyaDateKey();
+  try {
+    const fallback = await fetchGlobalFallbackFixtures({ data: { dateFrom: today, dateTo: addDays(today, 90) } });
+    loaded = loaded.map((group) => mergeFallback(group, fallback));
+  } catch {
+    // Fallback is deliberately non-fatal: the primary free feed still works when an external source is unavailable.
+  }
+
   return loaded;
-}
-
-function kenyaDateKey(date = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
-}
-
-function sourceDateKey(value: string) {
-  const m = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  if (!m) return value;
-  const year = m[3].length === 2 ? Number(m[3]) + 2000 : Number(m[3]);
-  return `${year.toString().padStart(4, "0")}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
 }
 
 function ukOffsetHours(dateKey: string) {
@@ -150,7 +180,10 @@ export function kickoffKenya(match: MatchRow) {
   const key = sourceDateKey(match.date);
   const m = match.time.match(/^(\d{1,2}):(\d{2})/);
   if (!m) return undefined;
-  const minutes = Number(m[1]) * 60 + Number(m[2]) + ukOffsetHours(key) * 60;
+  // Football-Data times are UK local time. Fallback global-live times are UTC.
+  const isUtc = match.source === "global-live";
+  const offset = isUtc ? 0 : ukOffsetHours(key);
+  const minutes = Number(m[1]) * 60 + Number(m[2]) + offset * 60;
   const dayShift = Math.floor(minutes / 1440);
   const normalized = ((minutes % 1440) + 1440) % 1440;
   return `${key}${dayShift ? `+${dayShift}` : ""} ${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(normalized % 60).padStart(2, "0")}`;
@@ -164,12 +197,16 @@ export function upcomingFixtures(all: FreeLeague[], minimumHourEAT = 21) {
     const dateKey = sourceDateKey(match.date);
     if (dateKey > today) return true;
     if (dateKey < today) return false;
-    if (!match.time) return false;
+    if (!match.time) return dateKey === today;
     const kenya = kickoffKenya(match);
-    if (!kenya) return false;
+    if (!kenya) return true;
     const hm = kenya.match(/ (\d{2}):(\d{2})$/);
     return !!hm && Number(hm[1]) * 60 + Number(hm[2]) >= todayCutoff;
-  }).map((match) => ({ ...match, league: group.league, code: group.code, season: group.season })) as Array<MatchRow & { league: string; code: string; season: string }>).sort((a, b) => `${sourceDateKey(a.date)} ${a.time ?? "99:99"}`.localeCompare(`${sourceDateKey(b.date)} ${b.time ?? "99:99"}`));
+  }).map((match) => ({ ...match, league: group.league, code: group.code, season: group.season })) as Array<MatchRow & { league: string; code: string; season: string }>).sort((a, b) => {
+    const ak = kickoffKenya(a) ?? `${sourceDateKey(a.date)} 99:99`;
+    const bk = kickoffKenya(b) ?? `${sourceDateKey(b.date)} 99:99`;
+    return ak.localeCompare(bk);
+  });
 }
 
 export function findFixtures(all: FreeLeague[], query: string): (MatchRow & { league: string; code: string; season: string })[] {
