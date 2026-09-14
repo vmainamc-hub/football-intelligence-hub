@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { fetchGlobalFallbackFixtures, type ExternalFixture } from "./fixture-sources";
+import { fetchGlobalFallbackFixtures, fetchGlobalFallbackFixturesInternal, type ExternalFixture } from "./fixture-sources";
 import type { MatchRow } from "./intelligence";
 
 const BASE = "https://sportscore.com";
@@ -59,15 +59,29 @@ function slugifyTeam(value: string) {
   return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+function filterSearchResults(results: MatchRow[], q: string, teamTerms: string[]) {
+  const needle = q.toLowerCase().replace(/\s+/g, " ");
+  const seen = new Set<string>();
+  return results
+    .filter((m) => `${m.home} ${m.away}`.toLowerCase().includes(needle) || (teamTerms.length >= 1 && teamTerms.every((t) => `${m.home} ${m.away}`.toLowerCase().includes(t.toLowerCase()))))
+    .filter((m) => {
+      const id = `${m.date}|${m.home}|${m.away}|${m.time ?? ""}`;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 export const fetchUniversalFixtures = createServerFn({ method: "GET" })
   .validator((input: { dateFrom: string; dateTo: string }) => input)
   .handler(async ({ data }): Promise<MatchRow[]> => {
-    const results: MatchRow[] = await fetchGlobalFallbackFixtures({ data });
+    const results: MatchRow[] = await fetchGlobalFallbackFixturesInternal(data);
     try {
       const r = await withTimeout(`${BASE}/api/widget/matches/?sport=football&limit=50`);
       if (r.ok) results.push(...parseSportScore(await r.json(), "broad"));
     } catch {
-      // SportScore is an enrichment source; primary free sources remain usable.
+      // SportScore is enrichment only.
     }
     return results.filter((m) => m.date >= data.dateFrom && m.date <= data.dateTo || m.source === "global-live");
   });
@@ -83,12 +97,15 @@ export const searchUniversalFixtures = createServerFn({ method: "GET" })
     const results: MatchRow[] = [];
     const searches = teamTerms.map((team) => withTimeout(`${BASE}/api/widget/team/?sport=football&slug=${encodeURIComponent(slugifyTeam(team))}&limit=30`).then(async (r) => r.ok ? parseSportScore(await r.json(), `team-${slugifyTeam(team)}`) : []).catch(() => []));
     for (const rows of await Promise.all(searches)) results.push(...rows);
-    const needle = q.toLowerCase().replace(/\s+/g, " ");
-    const seen = new Set<string>();
-    return results.filter((m) => `${m.home} ${m.away}`.toLowerCase().includes(needle) || (teamTerms.length >= 1 && teamTerms.every((t) => `${m.home} ${m.away}`.toLowerCase().includes(t.toLowerCase())))).filter((m) => {
-      const id = `${m.date}|${m.home}|${m.away}|${m.time ?? ""}`;
-      if (seen.has(id)) return false; seen.add(id); return true;
-    }).sort((a, b) => a.date.localeCompare(b.date));
+
+    let filtered = filterSearchResults(results, q, teamTerms);
+    if (!filtered.length) {
+      const today = new Date().toISOString().slice(0, 10);
+      const next30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+      const fallback = await fetchGlobalFallbackFixturesInternal({ dateFrom: today, dateTo: next30 }).catch(() => [] as ExternalFixture[]);
+      filtered = filterSearchResults(fallback, q, teamTerms);
+    }
+    return filtered.slice(0, 48);
   });
 
 export type UniversalSourceStatus = { name: string; role: string; free: boolean; configured: boolean };
