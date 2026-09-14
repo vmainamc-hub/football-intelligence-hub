@@ -1,3 +1,3 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ModulePage } from "@/components/gfi/module-page";
-export const Route = createFileRoute("/predictions")({ component: () => <ModulePage title="Prediction History" eyebrow="IMMUTABLE LEDGER" description="Record what the model believed at the time, then settle it against the actual result. Retrospective editing of the original prediction is not part of the design." stages={[{name:"Prediction snapshot",detail:"Store probabilities, evidence quality, model version and timestamp.",live:false},{name:"Outcome settlement",detail:"Attach the final result and market outcomes after the match.",live:false},{name:"Calibration",detail:"Measure reliability of probability bands over time.",live:false},{name:"Drift monitoring",detail:"Detect when a model stops behaving like its historical calibration.",live:false}]} /> });
+import { PredictionsModule } from "@/components/gfi/functional-modules";
+export const Route = createFileRoute("/predictions")({ component: PredictionsModule });
