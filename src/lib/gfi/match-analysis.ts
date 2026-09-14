@@ -6,13 +6,16 @@ export type AnalysisPipelineTrace = {
   fixtureId: string;
   source: string;
   competition: string;
+  competitionsLoaded: number;
   historicalRowsLoaded: number;
+  targetCompetitionRows: number;
   homeRowsMatched: number;
   awayRowsMatched: number;
   homeSample: number;
   awaySample: number;
   h2hSample: number;
   enginesRun: string[];
+  evidenceMode: "TARGET_COMPETITION" | "GLOBAL_CONTEXT" | "LIMITED";
   generatedAt: string;
 };
 
@@ -25,7 +28,7 @@ const normalizeName = (value: string) => value
   .replace(/[\u0300-\u036f]/g, "")
   .toLowerCase()
   .replace(/\bfootball club\b/g, "")
-  .replace(/\b(afc|fc)\b/g, "")
+  .replace(/\b(afc|fc|cf|sc)\b/g, "")
   .replace(/[^a-z0-9]/g, "")
   .trim();
 
@@ -53,20 +56,31 @@ function dateKey(value: string) {
 }
 
 function fixtureId(fixture: MatchRow) {
-  return [dateKey(fixture.date), normalizeName(fixture.home), normalizeName(fixture.away), fixture.time ?? "", fixture.source ?? "free"].join("|");
+  return [dateKey(fixture.date), normalizeName(fixture.home), normalizeName(fixture.away), fixture.time ?? "", fixture.league ?? "", fixture.source ?? "free", fixture.sourceId ?? ""].join("|");
 }
 
 function prepareHistoricalMatches(fixture: MatchRow, rows: MatchRow[]) {
-  const aligned = rows
+  return rows
     .filter((row) => row.hg !== undefined && row.ag !== undefined)
-    .filter((row) => dateKey(row.date) <= dateKey(fixture.date))
+    .filter((row) => dateKey(row.date) < dateKey(fixture.date))
     .map((row) => ({
       ...row,
       home: sameTeam(row.home, fixture.home) ? fixture.home : sameTeam(row.home, fixture.away) ? fixture.away : row.home,
       away: sameTeam(row.away, fixture.home) ? fixture.home : sameTeam(row.away, fixture.away) ? fixture.away : row.away,
-    }));
+    }))
+    .sort((a, b) => `${dateKey(a.date)} ${a.time ?? ""}`.localeCompare(`${dateKey(b.date)} ${b.time ?? ""}`));
+}
 
-  return aligned.sort((a, b) => `${dateKey(a.date)} ${a.time ?? ""}`.localeCompare(`${dateKey(b.date)} ${b.time ?? ""}`));
+function dedupeRows(rows: MatchRow[]) {
+  const seen = new Set<string>();
+  const result: MatchRow[] = [];
+  for (const row of rows) {
+    const id = `${dateKey(row.date)}|${normalizeName(row.home)}|${normalizeName(row.away)}|${row.hg ?? ""}|${row.ag ?? ""}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    result.push(row);
+  }
+  return result;
 }
 
 export const analyzeFreeMatch = createServerFn({ method: "POST" })
@@ -74,15 +88,21 @@ export const analyzeFreeMatch = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<ServerMatchAnalysis> => {
     const groups = await loadFreeFixtures();
     const group = groups.find((item) => item.code === data.code);
-    if (!group) throw new Error(`League ${data.code} is not available in FREE MODE.`);
+    if (!group) throw new Error(`Competition ${data.code} is not available in FREE MODE.`);
 
-    const historical = prepareHistoricalMatches(data.fixture, group.matches);
+    const targetRows = prepareHistoricalMatches(data.fixture, group.matches);
+    const globalRows = prepareHistoricalMatches(data.fixture, groups.flatMap((item) => item.matches));
+    const historical = dedupeRows([...targetRows, ...globalRows]);
     const homeRows = historical.filter((row) => sameTeam(row.home, data.fixture.home) || sameTeam(row.away, data.fixture.home));
     const awayRows = historical.filter((row) => sameTeam(row.home, data.fixture.away) || sameTeam(row.away, data.fixture.away));
-    const result = analyzeAuthoritatively({ ...data.fixture, home: data.fixture.home, away: data.fixture.away }, historical);
-    const engineNames = result.engines.map((engine) => engine.id);
-    const h2hSample = result.engines.find((engine) => engine.id === "H2H")?.values.matches ?? 0;
+
+    const evidenceMode: AnalysisPipelineTrace["evidenceMode"] =
+      Math.min(homeRows.length, awayRows.length) >= 8 ? "TARGET_COMPETITION" :
+      Math.min(homeRows.length, awayRows.length) >= 4 ? "GLOBAL_CONTEXT" : "LIMITED";
+
+    const result = analyzeAuthoritatively({ ...data.fixture }, historical);
     const generatedAt = new Date().toISOString();
+    const h2hSample = result.engines.find((engine) => engine.id === "H2H")?.values.matches ?? 0;
 
     return {
       ...result,
@@ -90,13 +110,16 @@ export const analyzeFreeMatch = createServerFn({ method: "POST" })
         fixtureId: fixtureId(data.fixture),
         source: data.fixture.source ?? "free-data",
         competition: data.fixture.league ?? group.league,
+        competitionsLoaded: groups.length,
         historicalRowsLoaded: historical.length,
+        targetCompetitionRows: targetRows.length,
         homeRowsMatched: homeRows.length,
         awayRowsMatched: awayRows.length,
         homeSample: result.home.played,
         awaySample: result.away.played,
         h2hSample,
-        enginesRun: engineNames,
+        enginesRun: result.engines.map((engine) => engine.id),
+        evidenceMode,
         generatedAt,
       },
     };
