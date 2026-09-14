@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { ArrowRight, Database, Search, ShieldCheck } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { findFixtures, loadFreeFixtures, type MatchRow } from "@/lib/gfi/intelligence";
+import { findFixtures, kickoffKenya, loadFreeFixtures, type MatchRow } from "@/lib/gfi/intelligence";
 import { getUpcomingFixtures } from "@/lib/gfi/upcoming";
 
 export const Route = createFileRoute("/")({ component: Home });
@@ -34,7 +34,8 @@ function Home() {
 
 function FixtureRow({ fixture }: { fixture: MatchRow & { league?: string; code?: string } }) {
   const id = encodeURIComponent(`${fixture.home}__${fixture.away}__${fixture.date}`);
-  const time = fixture.time ? fixture.time.slice(0, 5) : undefined;
+  const kenya = kickoffKenya(fixture);
+  const time = kenya?.match(/ (\d{2}:\d{2})$/)?.[1];
   return <Link to="/match/$matchId" params={{ matchId: id }} className="flex items-center gap-4 border-b border-border bg-card px-5 py-4 last:border-0 hover:bg-muted/40"><div className="min-w-0 flex-1"><div className="font-medium">{fixture.home} <span className="text-muted-foreground">vs</span> {fixture.away}</div><div className="label-xs mt-1">{fixture.league} · {time ? `${time} EAT` : fixture.date}</div></div><ArrowRight className="size-4 text-muted-foreground"/></Link>;
 }
 
