@@ -1,5 +1,6 @@
 import { fetchFreeLeagueCsv } from "./free-data";
-import { fetchGlobalFallbackFixtures, fixtureIdentity, type ExternalFixture } from "./fixture-sources";
+import { fixtureIdentity, type ExternalFixture } from "./fixture-sources";
+import { fetchUniversalFixtures } from "./universal-sources";
 import { analyzeAuthoritatively } from "./authoritative";
 
 export type MatchRow = {
@@ -127,13 +128,58 @@ function sourceDateKey(value: string) {
   return `${year.toString().padStart(4, "0")}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
 }
 
-function mergeFallback(group: FreeLeague, fallback: ExternalFixture[]) {
-  const identities = new Set(group.matches.map(fixtureIdentity));
-  const additions = fallback
-    .filter((match) => match.league === group.league)
-    .filter((match) => !identities.has(fixtureIdentity(match)))
-    .map((match) => ({ ...match, code: group.code }));
-  return { ...group, matches: [...group.matches, ...additions] };
+function normaliseLeague(value: string) {
+  const n = value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const aliases: Record<string, string> = {
+    "liga portugal": "Primeira Liga",
+    "liga portugal betclic": "Primeira Liga",
+    "portuguese primeira liga": "Primeira Liga",
+    "primeira liga": "Primeira Liga",
+    "english premier league": "Premier League",
+    "english championship": "Championship",
+    "german bundesliga": "Bundesliga",
+    "2 bundesliga": "2. Bundesliga",
+    "spanish laliga": "La Liga",
+    "spanish la liga": "La Liga",
+    "italian serie a": "Serie A",
+    "french ligue 1": "Ligue 1",
+    "dutch eredivisie": "Eredivisie",
+  };
+  return aliases[n] ?? value.trim() || "Worldwide Football";
+}
+
+function dynamicCode(league: string) {
+  let hash = 0;
+  for (const char of league) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return `G${hash.toString(36).slice(0, 7).toUpperCase()}`;
+}
+
+function addFallbackGroups(groups: FreeLeague[], fallback: ExternalFixture[]) {
+  const byLeague = new Map<string, ExternalFixture[]>();
+  for (const raw of fallback) {
+    const league = normaliseLeague(raw.league ?? "Worldwide Football");
+    const rows = byLeague.get(league) ?? [];
+    rows.push({ ...raw, league });
+    byLeague.set(league, rows);
+  }
+  const next = groups.map((group) => ({ ...group, matches: [...group.matches] }));
+  for (const [league, rows] of byLeague) {
+    const target = next.find((group) => normaliseLeague(group.league) === league);
+    if (target) {
+      const identities = new Set(target.matches.map(fixtureIdentity));
+      target.matches.push(...rows.filter((match) => !identities.has(fixtureIdentity(match))).map((match) => ({ ...match, code: target.code, league: target.league })));
+      continue;
+    }
+    const code = dynamicCode(league);
+    const existing = next.find((group) => group.code === code);
+    if (existing) {
+      const identities = new Set(existing.matches.map(fixtureIdentity));
+      existing.matches.push(...rows.filter((match) => !identities.has(fixtureIdentity(match))));
+    } else {
+      next.push({ league, code, season: currentSeasonCode(), matches: rows.map((match) => ({ ...match, code, league })), sourceUrl: "universal-free-sources", fetchedAt: new Date().toISOString() });
+    }
+  }
+  return next;
 }
 
 export async function loadFreeFixtures(): Promise<FreeLeague[]> {
@@ -150,17 +196,13 @@ export async function loadFreeFixtures(): Promise<FreeLeague[]> {
     const failures = settled.filter((item): item is PromiseRejectedResult => item.status === "rejected").map((item, index) => `${entries[index]?.[0] ?? "unknown"}: ${String(item.reason)}`).join("; ");
     throw new Error(`FREE football data feed unavailable for season ${season}. ${failures}`);
   }
-
-  // Football-Data remains the statistical backbone. Fallback sources only add missing fixtures,
-  // so the authoritative prediction engine and its historical calculations remain unchanged.
   const today = kenyaDateKey();
   try {
-    const fallback = await fetchGlobalFallbackFixtures({ data: { dateFrom: today, dateTo: addDays(today, 90) } });
-    loaded = loaded.map((group) => mergeFallback(group, fallback));
+    const fallback = await fetchUniversalFixtures({ data: { dateFrom: today, dateTo: addDays(today, 14) } });
+    loaded = addFallbackGroups(loaded, fallback as ExternalFixture[]);
   } catch {
-    // Fallback is deliberately non-fatal: the primary free feed still works when an external source is unavailable.
+    // The primary statistical backbone stays available when an enrichment source is down.
   }
-
   return loaded;
 }
 
@@ -180,8 +222,7 @@ export function kickoffKenya(match: MatchRow) {
   const key = sourceDateKey(match.date);
   const m = match.time.match(/^(\d{1,2}):(\d{2})/);
   if (!m) return undefined;
-  // Football-Data times are UK local time. Fallback global-live times are UTC.
-  const isUtc = match.source === "global-live";
+  const isUtc = match.source === "global-live" || match.source === "sportscore";
   const offset = isUtc ? 0 : ukOffsetHours(key);
   const minutes = Number(m[1]) * 60 + Number(m[2]) + offset * 60;
   const dayShift = Math.floor(minutes / 1440);
@@ -189,24 +230,9 @@ export function kickoffKenya(match: MatchRow) {
   return `${key}${dayShift ? `+${dayShift}` : ""} ${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(normalized % 60).padStart(2, "0")}`;
 }
 
-export function upcomingFixtures(all: FreeLeague[], minimumHourEAT = 21) {
+export function upcomingFixtures(all: FreeLeague[]) {
   const today = kenyaDateKey();
-  const todayCutoff = minimumHourEAT * 60;
-  return all.flatMap((group) => group.matches.filter((match) => {
-    if (match.hg !== undefined || match.ag !== undefined) return false;
-    const dateKey = sourceDateKey(match.date);
-    if (dateKey > today) return true;
-    if (dateKey < today) return false;
-    if (!match.time) return dateKey === today;
-    const kenya = kickoffKenya(match);
-    if (!kenya) return true;
-    const hm = kenya.match(/ (\d{2}):(\d{2})$/);
-    return !!hm && Number(hm[1]) * 60 + Number(hm[2]) >= todayCutoff;
-  }).map((match) => ({ ...match, league: group.league, code: group.code, season: group.season })) as Array<MatchRow & { league: string; code: string; season: string }>).sort((a, b) => {
-    const ak = kickoffKenya(a) ?? `${sourceDateKey(a.date)} 99:99`;
-    const bk = kickoffKenya(b) ?? `${sourceDateKey(b.date)} 99:99`;
-    return ak.localeCompare(bk);
-  });
+  return all.flatMap((group) => group.matches.filter((match) => match.hg === undefined && match.ag === undefined && sourceDateKey(match.date) >= today).map((match) => ({ ...match, league: group.league, code: group.code, season: group.season }))).sort((a, b) => (kickoffKenya(a) ?? `${sourceDateKey(a.date)} 99:99`).localeCompare(kickoffKenya(b) ?? `${sourceDateKey(b.date)} 99:99`));
 }
 
 export function findFixtures(all: FreeLeague[], query: string): (MatchRow & { league: string; code: string; season: string })[] {
@@ -218,7 +244,7 @@ export function findFixtures(all: FreeLeague[], query: string): (MatchRow & { le
     const af = au && sourceDateKey(a.date) >= today, bf = bu && sourceDateKey(b.date) >= today;
     if (af !== bf) return af ? -1 : 1;
     return sourceDateKey(b.date).localeCompare(sourceDateKey(a.date));
-  }).slice(0, 24);
+  }).slice(0, 48);
 }
 
 export { analyzeAuthoritatively } from "./authoritative";
