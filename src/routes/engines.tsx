@@ -1,3 +1,3 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { EnginesModule } from "@/components/gfi/functional-modules";
-export const Route = createFileRoute("/engines")({ component: EnginesModule });
+import { EngineArena } from "@/components/gfi/engine-arena";
+export const Route = createFileRoute("/engines")({ component: EngineArena });
