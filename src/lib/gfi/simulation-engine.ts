@@ -32,9 +32,7 @@ function rng(seed: number) {
 
 function poisson(lambda: number, random: () => number) {
   const target = random();
-  let p = Math.exp(-lambda);
-  let cumulative = p;
-  let k = 0;
+  let p = Math.exp(-lambda), cumulative = p, k = 0;
   while (target > cumulative && k < 12) {
     k += 1;
     p *= lambda / k;
@@ -43,17 +41,14 @@ function poisson(lambda: number, random: () => number) {
   return k;
 }
 
-export function simulateAnalysis(analysis: AuthoritativeMatchAnalysis, iterations = 10000): SimulationSummary {
-  const goal = analysis.engines.find((e) => e.id === "GOALS");
-  const lambdaHome = Math.max(0.05, Number(goal?.values.lambdaHome ?? 1.2));
-  const lambdaAway = Math.max(0.05, Number(goal?.values.lambdaAway ?? 1));
+export function simulateGoalBaseline(lambdaHome: number, lambdaAway: number, seedKey: string, iterations = 10000) {
   const n = Math.max(1000, Math.min(iterations, 50000));
-  const random = rng(makeSeed(`${analysis.fixtureId}|${analysis.analysisVersion}|${n}`));
+  const random = rng(makeSeed(`${seedKey}|${n}`));
   let homeWin = 0, draw = 0, awayWin = 0, over05 = 0, over15 = 0, over25 = 0, over35 = 0, btts = 0;
   const scores = new Map<string, number>();
   for (let i = 0; i < n; i += 1) {
-    const home = poisson(lambdaHome, random);
-    const away = poisson(lambdaAway, random);
+    const home = poisson(Math.max(0.05, lambdaHome), random);
+    const away = poisson(Math.max(0.05, lambdaAway), random);
     const total = home + away;
     if (home > away) homeWin += 1; else if (home === away) draw += 1; else awayWin += 1;
     if (total >= 1) over05 += 1;
@@ -64,35 +59,35 @@ export function simulateAnalysis(analysis: AuthoritativeMatchAnalysis, iteration
     const key = `${home}-${away}`;
     scores.set(key, (scores.get(key) ?? 0) + 1);
   }
-  const toProbability = (value: number) => value / n;
-  const topScores = [...scores.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-    .map(([score, count]) => ({ score, count, probability: count / n }));
-  const simulationMax = Math.max(homeWin, draw, awayWin) / n;
-  const authoritativeMax = Math.max(analysis.probabilities.home, analysis.probabilities.draw, analysis.probabilities.away);
-  const scenarioAgreement = Math.max(0, 1 - Math.abs(simulationMax - authoritativeMax) * 2);
-
   return {
     iterations: n,
-    homeWin: toProbability(homeWin),
-    draw: toProbability(draw),
-    awayWin: toProbability(awayWin),
-    over05: toProbability(over05),
-    over15: toProbability(over15),
-    over25: toProbability(over25),
-    over35: toProbability(over35),
-    btts: toProbability(btts),
-    expectedGoals: lambdaHome + lambdaAway,
-    scenarioAgreement,
-    topScores,
-    sourceAnalysisVersion: analysis.analysisVersion,
+    homeWin: homeWin / n,
+    draw: draw / n,
+    awayWin: awayWin / n,
+    over05: over05 / n,
+    over15: over15 / n,
+    over25: over25 / n,
+    over35: over35 / n,
+    btts: btts / n,
+    expectedGoals: Math.max(0.05, lambdaHome) + Math.max(0.05, lambdaAway),
+    topScores: [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([score, count]) => ({ score, count, probability: count / n })),
   };
+}
+
+export function simulateAnalysis(analysis: AuthoritativeMatchAnalysis, iterations = 10000): SimulationSummary {
+  const goal = analysis.engines.find((e) => e.id === "GOALS");
+  const lambdaHome = Number(goal?.values.lambdaHome ?? 1.2);
+  const lambdaAway = Number(goal?.values.lambdaAway ?? 1);
+  const base = simulateGoalBaseline(lambdaHome, lambdaAway, analysis.fixtureId, iterations);
+  const simulationMax = Math.max(base.homeWin, base.draw, base.awayWin);
+  const authoritativeMax = Math.max(analysis.probabilities.home, analysis.probabilities.draw, analysis.probabilities.away);
+  const scenarioAgreement = Math.max(0, 1 - Math.abs(simulationMax - authoritativeMax) * 2);
+  return { ...base, scenarioAgreement, sourceAnalysisVersion: analysis.analysisVersion };
 }
 
 export function simulationEngineOutput(analysis: AuthoritativeMatchAnalysis, iterations = 10000): { summary: SimulationSummary; engine: EngineOutput } {
   const summary = simulateAnalysis(analysis, iterations);
-  const probabilities = { home: summary.homeWin, draw: summary.draw, away: summary.awayWin };
+  const probabilities = { home: summary.homeWin, draw: summary.draw, away: summary.away };
   const winner = Math.max(probabilities.home, probabilities.draw, probabilities.away);
   const signal = summary.scenarioAgreement >= 0.8 ? "SUPPORT" : summary.scenarioAgreement >= 0.6 ? "NEUTRAL" : "CONTRADICTION";
   return {
@@ -105,22 +100,13 @@ export function simulationEngineOutput(analysis: AuthoritativeMatchAnalysis, ite
       confidence: Math.round((0.5 + Math.abs(winner - 1 / 3) * 0.9) * 100),
       quality: 82,
       probabilities,
-      values: {
-        iterations: summary.iterations,
-        over05: summary.over05,
-        over15: summary.over15,
-        over25: summary.over25,
-        over35: summary.over35,
-        btts: summary.btts,
-        expectedGoals: summary.expectedGoals,
-        scenarioAgreement: summary.scenarioAgreement,
-      },
+      values: { iterations: summary.iterations, over05: summary.over05, over15: summary.over15, over25: summary.over25, over35: summary.over35, btts: summary.btts, expectedGoals: summary.expectedGoals, scenarioAgreement: summary.scenarioAgreement },
       evidence: [
-        `Scenario engine simulated ${summary.iterations.toLocaleString()} deterministic seeded match worlds from the authoritative goal baseline.`,
+        `Scenario engine simulated ${summary.iterations.toLocaleString()} deterministic seeded match worlds from the goal baseline.`,
         `Simulated outcome: H ${(summary.homeWin * 100).toFixed(1)}% · D ${(summary.draw * 100).toFixed(1)}% · A ${(summary.awayWin * 100).toFixed(1)}%.`,
         `Scenario agreement with the authoritative 1X2 surface: ${(summary.scenarioAgreement * 100).toFixed(1)}%.`,
       ],
-      limitations: ["Simulation is downstream of the current goal model and is not an independent information source."]
-    }
+      limitations: ["Simulation is downstream of the goal model, so it validates the current scoring assumptions rather than adding a wholly independent information source."],
+    },
   };
 }
