@@ -1,16 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { MatchRow } from "./intelligence";
 
-export type FixtureSourceName = "football-data" | "openfootball" | "global-live" | "sportsdb";
-
-export type ExternalFixture = MatchRow & {
-  source: FixtureSourceName;
-  sourceId?: string;
-  sourceUpdatedAt?: string;
-};
+export type FixtureSourceName = "football-data" | "openfootball" | "sportsdb";
+export type ExternalFixture = MatchRow & { source: FixtureSourceName; sourceId?: string; sourceUpdatedAt?: string };
 
 const OPENFOOTBALL_BASE = "https://raw.githubusercontent.com/openfootball/football.json/master";
-const GLOBAL_LIVE_BASE = "https://worldcup26.ir/get/soccer";
 const SPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3";
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -23,13 +17,6 @@ const OPENFOOTBALL_LEAGUES: Array<{ code: string; league: string; file: string }
   { code: "F1", league: "Ligue 1", file: "2026-27/fr.1.json" },
   { code: "N1", league: "Eredivisie", file: "2026-27/nl.1.json" },
   { code: "P1", league: "Primeira Liga", file: "2026-27/pt.1.json" },
-];
-
-const LIVE_LEAGUES = [
-  { code: "E0", league: "Premier League", slug: "eng.1" },
-  { code: "E1", league: "Championship", slug: "eng.2" },
-  { code: "SP1", league: "La Liga", slug: "esp.1" },
-  { code: "SP2", league: "La Liga 2", slug: "esp.2" },
 ];
 
 function sourceDateKey(value: string) {
@@ -45,11 +32,15 @@ function withTimeout(url: string, init: RequestInit = {}) {
   return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
+function addDays(key: string, days: number) {
+  const d = new Date(`${key}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function parseOpenFootball(payload: unknown, league: string, sourceUrl: string): ExternalFixture[] {
   if (!payload || typeof payload !== "object") return [];
-  const matches = Array.isArray((payload as { matches?: unknown }).matches)
-    ? (payload as { matches: unknown[] }).matches
-    : [];
+  const matches = Array.isArray((payload as { matches?: unknown }).matches) ? (payload as { matches: unknown[] }).matches : [];
   return matches.flatMap((raw, index) => {
     if (!raw || typeof raw !== "object") return [];
     const item = raw as Record<string, unknown>;
@@ -57,127 +48,29 @@ function parseOpenFootball(payload: unknown, league: string, sourceUrl: string):
     const home = typeof item.team1 === "string" ? item.team1 : "";
     const away = typeof item.team2 === "string" ? item.team2 : "";
     if (!date || !home || !away) return [];
-    const time = typeof item.time === "string" ? item.time.slice(0, 5) : undefined;
-    const score =
-      item.score && typeof item.score === "object"
-        ? (item.score as Record<string, unknown>)
-        : undefined;
-    const ft = Array.isArray(score?.ft) ? (score?.ft as unknown[]) : undefined;
-    const hg = typeof ft?.[0] === "number" ? ft[0] : undefined;
-    const ag = typeof ft?.[1] === "number" ? ft[1] : undefined;
-    return [
-      {
-        date: sourceDateKey(date),
-        time,
-        home,
-        away,
-        hg,
-        ag,
-        result:
-          hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
-        league,
-        source: "openfootball",
-        sourceId: `${sourceUrl}#${index}`,
-        sourceUpdatedAt: new Date().toISOString(),
-      } satisfies ExternalFixture,
-    ];
-  });
-}
-
-function parseGlobalLive(payload: unknown, league: string): ExternalFixture[] {
-  if (!payload || typeof payload !== "object") return [];
-  const root = payload as Record<string, unknown>;
-  const data =
-    root.data && typeof root.data === "object" ? (root.data as Record<string, unknown>) : undefined;
-  const candidates = [
-    root.fixtures,
-    root.matches,
-    root.events,
-    root.data,
-    data?.fixtures,
-    data?.matches,
-    data?.events,
-  ];
-  const matches = candidates.find(Array.isArray) as unknown[] | undefined;
-  if (!matches) return [];
-  return matches.flatMap((raw, index) => {
-    if (!raw || typeof raw !== "object") return [];
-    const item = raw as Record<string, unknown>;
-    const homeTeam =
-      item.home_team && typeof item.home_team === "object"
-        ? (item.home_team as Record<string, unknown>)
-        : undefined;
-    const awayTeam =
-      item.away_team && typeof item.away_team === "object"
-        ? (item.away_team as Record<string, unknown>)
-        : undefined;
-    const home =
-      typeof item.home === "string"
-        ? item.home
-        : typeof homeTeam?.name === "string"
-          ? homeTeam.name
-          : typeof item.strHomeTeam === "string"
-            ? item.strHomeTeam
-            : "";
-    const away =
-      typeof item.away === "string"
-        ? item.away
-        : typeof awayTeam?.name === "string"
-          ? awayTeam.name
-          : typeof item.strAwayTeam === "string"
-            ? item.strAwayTeam
-            : "";
-    const kickoff =
-      typeof item.kickoffUtc === "string"
-        ? item.kickoffUtc
-        : typeof item.utc_date === "string"
-          ? item.utc_date
-          : typeof item.date === "string"
-            ? item.date
-            : "";
-    if (!home || !away || !kickoff) return [];
-    const parsed = new Date(kickoff);
-    if (Number.isNaN(parsed.getTime())) return [];
-    const score =
-      item.score && typeof item.score === "object"
-        ? (item.score as Record<string, unknown>)
-        : undefined;
-    const hg =
-      typeof item.home_score === "number"
-        ? item.home_score
-        : typeof score?.home === "number"
-          ? score.home
-          : undefined;
-    const ag =
-      typeof item.away_score === "number"
-        ? item.away_score
-        : typeof score?.away === "number"
-          ? score.away
-          : undefined;
-    return [
-      {
-        date: parsed.toISOString().slice(0, 10),
-        time: parsed.toISOString().slice(11, 16),
-        home,
-        away,
-        hg,
-        ag,
-        result:
-          hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
-        league,
-        source: "global-live",
-        sourceId: String(item.id ?? item.event_id ?? index),
-        sourceUpdatedAt: new Date().toISOString(),
-      } satisfies ExternalFixture,
-    ];
+    const score = item.score && typeof item.score === "object" ? (item.score as Record<string, unknown>) : undefined;
+    const ft = Array.isArray(score?.ft) ? (score.ft as unknown[]) : [];
+    const hg = typeof ft[0] === "number" ? ft[0] : undefined;
+    const ag = typeof ft[1] === "number" ? ft[1] : undefined;
+    return [{
+      date: sourceDateKey(date),
+      time: typeof item.time === "string" ? item.time.slice(0, 5) : undefined,
+      home,
+      away,
+      hg,
+      ag,
+      result: hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
+      league,
+      source: "openfootball",
+      sourceId: `${sourceUrl}#${index}`,
+      sourceUpdatedAt: new Date().toISOString(),
+    } satisfies ExternalFixture];
   });
 }
 
 function parseSportsDb(payload: unknown): ExternalFixture[] {
   if (!payload || typeof payload !== "object") return [];
-  const events = Array.isArray((payload as { events?: unknown }).events)
-    ? (payload as { events: unknown[] }).events
-    : [];
+  const events = Array.isArray((payload as { events?: unknown }).events) ? (payload as { events: unknown[] }).events : [];
   return events.flatMap((raw, index) => {
     if (!raw || typeof raw !== "object") return [];
     const item = raw as Record<string, unknown>;
@@ -185,79 +78,68 @@ function parseSportsDb(payload: unknown): ExternalFixture[] {
     const away = typeof item.strAwayTeam === "string" ? item.strAwayTeam : "";
     const date = typeof item.dateEvent === "string" ? item.dateEvent : "";
     if (!home || !away || !date) return [];
-    const time = typeof item.strTime === "string" ? item.strTime.slice(0, 5) : undefined;
     const hg = typeof item.intHomeScore === "number" ? item.intHomeScore : undefined;
     const ag = typeof item.intAwayScore === "number" ? item.intAwayScore : undefined;
-    return [
-      {
-        date: sourceDateKey(date),
-        time,
-        home,
-        away,
-        hg,
-        ag,
-        result:
-          hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
-        league: typeof item.strLeague === "string" ? item.strLeague : "Worldwide Football",
-        source: "sportsdb",
-        sourceId: String(item.idEvent ?? index),
-        sourceUpdatedAt: new Date().toISOString(),
-      } satisfies ExternalFixture,
-    ];
+    return [{
+      date: sourceDateKey(date),
+      time: typeof item.strTime === "string" ? item.strTime.slice(0, 5) : undefined,
+      home,
+      away,
+      hg,
+      ag,
+      result: hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
+      league: typeof item.strLeague === "string" ? item.strLeague : "Worldwide Football",
+      source: "sportsdb",
+      sourceId: String(item.idEvent ?? index),
+      sourceUpdatedAt: new Date().toISOString(),
+    } satisfies ExternalFixture];
   });
+}
+
+async function collectSportsDb(from: string, to: string) {
+  const days = Math.max(1, Math.min(14, Math.floor((Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 86_400_000) + 1));
+  const out: ExternalFixture[] = [];
+  const concurrency = 3;
+  for (let start = 0; start < days; start += concurrency) {
+    const batch = await Promise.allSettled(Array.from({ length: Math.min(concurrency, days - start) }, (_, offset) => {
+      const date = addDays(from, start + offset);
+      return withTimeout(`${SPORTSDB_BASE}/eventsday.php?d=${date}&s=Soccer`, { headers: { Accept: "application/json" } })
+        .then(async (response) => response.ok ? parseSportsDb(await response.json()) : [])
+        .catch(() => [] as ExternalFixture[]);
+    }));
+    for (const item of batch) if (item.status === "fulfilled") out.push(...item.value);
+  }
+  return out;
 }
 
 export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
   .validator((input: { dateFrom: string; dateTo: string }) => input)
   .handler(async ({ data }): Promise<ExternalFixture[]> => {
     const results: ExternalFixture[] = [];
-    const openfootball = await Promise.allSettled(
-      OPENFOOTBALL_LEAGUES.map(async (entry) => {
-        const response = await withTimeout(`${OPENFOOTBALL_BASE}/${entry.file}`, {
-          headers: { Accept: "application/json" },
-        });
-        if (!response.ok) throw new Error(`OpenFootball ${entry.file}: HTTP ${response.status}`);
-        return parseOpenFootball(
-          await response.json(),
-          entry.league,
-          response.url || `${OPENFOOTBALL_BASE}/${entry.file}`,
-        );
-      }),
-    );
-    for (const result of openfootball)
-      if (result.status === "fulfilled") results.push(...result.value);
+    const openfootball = await Promise.allSettled(OPENFOOTBALL_LEAGUES.map(async (entry) => {
+      const response = await withTimeout(`${OPENFOOTBALL_BASE}/${entry.file}`, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(`OpenFootball ${entry.file}: HTTP ${response.status}`);
+      return parseOpenFootball(await response.json(), entry.league, response.url || `${OPENFOOTBALL_BASE}/${entry.file}`);
+    }));
+    for (const result of openfootball) if (result.status === "fulfilled") results.push(...result.value);
 
-    const live = await Promise.allSettled(
-      LIVE_LEAGUES.map(async (entry) => {
-        const url = `${GLOBAL_LIVE_BASE}/${entry.slug}/fixtures?status=all&from=${data.dateFrom.replaceAll("-", "")}&to=${data.dateTo.replaceAll("-", "")}`;
-        const response = await withTimeout(url, {
-          headers: { Accept: "application/json", "User-Agent": "Global-Football-Intelligence/1.0" },
-        });
-        if (!response.ok) throw new Error(`Global live ${entry.slug}: HTTP ${response.status}`);
-        return parseGlobalLive(await response.json(), entry.league);
-      }),
-    );
-    for (const result of live) if (result.status === "fulfilled") results.push(...result.value);
+    const sportsDb = await collectSportsDb(data.dateFrom, data.dateTo);
+    results.push(...sportsDb);
 
-    try {
-      const response = await withTimeout(
-        `${SPORTSDB_BASE}/eventsday.php?d=${data.dateFrom}&s=Soccer`,
-        { headers: { Accept: "application/json" } },
-      );
-      if (response.ok) results.push(...parseSportsDb(await response.json()));
-    } catch {
-      // Optional source unavailable; keep all other fixture sources.
-    }
-
+    const seen = new Set<string>();
     return results.filter((match) => {
       const date = sourceDateKey(match.date);
-      return date >= data.dateFrom && date <= data.dateTo;
+      if (date < data.dateFrom || date > data.dateTo) return false;
+      const id = `${date}|${match.home.toLowerCase()}|${match.away.toLowerCase()}|${match.time ?? ""}|${match.source}`;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
     });
   });
 
 export function normalizeTeamName(value: string) {
-  return value
-    .toLowerCase()
+  return value.toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/\b(fc|afc|cf|sc|club|city|united)\b/g, "")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
