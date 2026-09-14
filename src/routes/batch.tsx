@@ -1,3 +1,3 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { BatchModule } from "@/components/gfi/functional-modules";
-export const Route = createFileRoute("/batch")({ component: BatchModule });
+import { BatchLab } from "@/components/gfi/batch-lab";
+export const Route = createFileRoute("/batch")({ component: BatchLab });
