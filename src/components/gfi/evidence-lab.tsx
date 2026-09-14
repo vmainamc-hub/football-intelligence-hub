@@ -72,9 +72,9 @@ export function EvidenceLab() {
                     </span>
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-3">
-                    {r.analysis.evidenceLedger.slice(0, 6).map((e) => (
+                    {r.analysis.evidenceLedger.slice(0, 6).map((e, idx) => (
                       <div
-                        key={e.id}
+                        key={`${e.id}-${idx}`}
                         className="border border-border p-3 text-xs text-muted-foreground"
                       >
                         <div className="label-xs mb-2">{e.source}</div>

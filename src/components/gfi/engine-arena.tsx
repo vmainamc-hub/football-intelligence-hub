@@ -60,8 +60,8 @@ export function EngineArena() {
                   <span className="label-xs">{row.analysis.decision}</span>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                  {row.analysis.engines.map((e) => (
-                    <div key={e.id} className="border border-border p-3">
+                  {row.analysis.engines.map((e, idx) => (
+                    <div key={`${e.id}-${idx}`} className="border border-border p-3">
                       <div className="label-xs">{e.id}</div>
                       <div className="metric mt-2">
                         {e.probabilities

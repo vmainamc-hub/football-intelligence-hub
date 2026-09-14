@@ -160,8 +160,11 @@ function MatchIntelligence() {
             </div>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">{reasoning.summary}</p>
             <div className="mt-4 grid gap-2">
-              {reasoning.claims.slice(0, 4).map((c) => (
-                <div key={c.id} className="rounded border border-border px-3 py-2 text-xs">
+              {reasoning.claims.slice(0, 4).map((c, idx) => (
+                <div
+                  key={`${c.id}-${idx}`}
+                  className="rounded border border-border px-3 py-2 text-xs"
+                >
                   <span className="label-xs mr-2">{c.signal}</span>
                   {c.statement}
                   <div className="mt-1 text-muted-foreground">{c.evidence}</div>
@@ -221,8 +224,8 @@ function MatchIntelligence() {
         <section className="mt-6">
           <div className="label-xs text-primary">ENGINE GRAPH</div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-            {result.engines.map((e) => (
-              <div key={e.id} className="rounded border border-border p-3">
+            {result.engines.map((e, idx) => (
+              <div key={`${e.id}-${idx}`} className="rounded border border-border p-3">
                 <div className="text-sm font-semibold">{e.name}</div>
                 <div className="mt-1 text-xs text-muted-foreground">
                   {e.signal} · Q{e.quality} · {e.version}

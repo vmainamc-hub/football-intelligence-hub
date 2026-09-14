@@ -84,10 +84,16 @@ export function analyzeLoadedFixture(
         : Math.min(home.length, away.length) >= 4
           ? "GLOBAL_CONTEXT"
           : "LIMITED";
-  const result = analyzeActiveAuthoritatively({ ...fixture }, all),
-    sim = simulationEngineOutput(result, 10000),
-    engines = [...result.engines, sim.engine],
-    generatedAt = new Date().toISOString();
+  const result = analyzeActiveAuthoritatively({ ...fixture }, all);
+  const existingSim = result.engines.find((e) => e.id === "SIMULATION");
+  const sim =
+    existingSim && result.aiReasoningPacket?.simulation
+      ? { engine: existingSim, summary: result.aiReasoningPacket.simulation }
+      : simulationEngineOutput(result, 10000);
+  const engines = result.engines.some((e) => e.id === "SIMULATION")
+    ? result.engines
+    : [...result.engines, sim.engine];
+  const generatedAt = new Date().toISOString();
   return {
     ...result,
     engines,
