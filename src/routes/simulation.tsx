@@ -1,3 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SimulationModule } from "@/components/gfi/functional-modules";
-export const Route = createFileRoute("/simulation")({ component: SimulationModule });
+import { SimulationLab } from "@/components/gfi/simulation-lab";
+
+export const Route = createFileRoute("/simulation")({ component: SimulationLab });
