@@ -1,3 +1,3 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ModulePage } from "@/components/gfi/module-page";
-export const Route = createFileRoute("/simulation")({ component: () => <ModulePage title="Simulation Lab" eyebrow="SCENARIO ENGINE" description="A dedicated home for Monte Carlo and match-state simulation. The UI separates model probability from scenario robustness." stages={[{name:"Parameter surface",detail:"Attack, defence and scoring-rate parameters feed the simulation.",live:true},{name:"Monte Carlo worlds",detail:"Generate repeated scoreline scenarios from transparent distributions.",live:false},{name:"State transitions",detail:"Extend the engine to goal-time, red-card and game-state branches.",live:false},{name:"Robustness analysis",detail:"Measure how often a conclusion survives parameter perturbation.",live:false}]} /> });
+import { SimulationModule } from "@/components/gfi/functional-modules";
+export const Route = createFileRoute("/simulation")({ component: SimulationModule });
