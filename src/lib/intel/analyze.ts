@@ -50,7 +50,9 @@ export function analyze(
   const lambdas = options.lambdaOverride ?? ens.lambdas;
 
   const runs = options.runs ?? 50000;
-  const seed = hashString(`${target.id}:${runs}:${lambdas.home.toFixed(3)}:${lambdas.away.toFixed(3)}`);
+  const seed = hashString(
+    `${target.id}:${runs}:${lambdas.home.toFixed(3)}:${lambdas.away.toFixed(3)}`,
+  );
   const simulation = simulateMatch(lambdas.home, lambdas.away, runs, seed);
 
   const probabilities = blendWithSimulation(ens.markets, simulation.markets, 0.4);
@@ -73,7 +75,13 @@ export function analyze(
     ? consensusValues.reduce((a, b) => a + b, 0) / consensusValues.length
     : 0;
 
-  const verdict = buildVerdict(outcomes, quality.score, stability.overall, conflicts, activeEngines);
+  const verdict = buildVerdict(
+    outcomes,
+    quality.score,
+    stability.overall,
+    conflicts,
+    activeEngines,
+  );
 
   const inputsHash = hashString(
     JSON.stringify({

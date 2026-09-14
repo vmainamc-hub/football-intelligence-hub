@@ -1,0 +1,6 @@
+{
+  "name": "Global Football Intelligence",
+  "description": "Multi-engine football match intelligence: statistical models, Monte Carlo simulation, consensus and contradiction analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

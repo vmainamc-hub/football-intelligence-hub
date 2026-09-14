@@ -5,12 +5,19 @@ export const getSystemStatus = createServerFn({ method: "GET" }).handler(async (
   const { providers } = await import("./gfi.server");
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const counts = await Promise.all(
-    (["competitions", "teams", "matches", "snapshots", "predictions", "engine_predictions"] as const).map(
-      async (t) => {
-        const { count } = await supabaseAdmin.from(t).select("*", { count: "exact", head: true });
-        return [t, count ?? 0] as const;
-      },
-    ),
+    (
+      [
+        "competitions",
+        "teams",
+        "matches",
+        "snapshots",
+        "predictions",
+        "engine_predictions",
+      ] as const
+    ).map(async (t) => {
+      const { count } = await supabaseAdmin.from(t).select("*", { count: "exact", head: true });
+      return [t, count ?? 0] as const;
+    }),
   );
   const { data: runs } = await supabaseAdmin
     .from("ingest_runs")
@@ -37,7 +44,9 @@ export const getSystemStatus = createServerFn({ method: "GET" }).handler(async (
 });
 
 export const ingestData = createServerFn({ method: "POST" })
-  .inputValidator((input: unknown) => z.object({ seasons: z.array(z.string()).optional() }).parse(input ?? {}))
+  .inputValidator((input: unknown) =>
+    z.object({ seasons: z.array(z.string()).optional() }).parse(input ?? {}),
+  )
   .handler(async ({ data }) => {
     const { ingestOpenFootball } = await import("./gfi.server");
     return ingestOpenFootball(data.seasons);
@@ -53,7 +62,10 @@ export const searchFixtures = createServerFn({ method: "POST" })
 export const listFixtures = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) =>
     z
-      .object({ scope: z.enum(["upcoming", "recent"]).default("upcoming"), limit: z.number().min(1).max(60).default(24) })
+      .object({
+        scope: z.enum(["upcoming", "recent"]).default("upcoming"),
+        limit: z.number().min(1).max(60).default(24),
+      })
       .parse(input ?? {}),
   )
   .handler(async ({ data }) => {
@@ -70,7 +82,9 @@ export const listFixtures = createServerFn({ method: "POST" })
 
 export const analyzeMatch = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) =>
-    z.object({ matchId: z.string().uuid(), runs: z.number().min(1000).max(200000).optional() }).parse(input),
+    z
+      .object({ matchId: z.string().uuid(), runs: z.number().min(1000).max(200000).optional() })
+      .parse(input),
   )
   .handler(async ({ data }) => {
     const { analyzeAndStore } = await import("./gfi.server");
@@ -97,7 +111,9 @@ export const getMatchIntelligence = createServerFn({ method: "POST" })
 
 export const batchAnalyze = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) =>
-    z.object({ matchIds: z.array(z.string().uuid()).min(1).max(24), runs: z.number().optional() }).parse(input),
+    z
+      .object({ matchIds: z.array(z.string().uuid()).min(1).max(24), runs: z.number().optional() })
+      .parse(input),
   )
   .handler(async ({ data }) => {
     const { analyzeAndStore } = await import("./gfi.server");
@@ -140,7 +156,11 @@ export const batchAnalyze = createServerFn({ method: "POST" })
             dataQuality: result.dataQuality,
           });
         } catch (e) {
-          results.push({ matchId: id, ok: false, error: e instanceof Error ? e.message : "Analysis failed" });
+          results.push({
+            matchId: id,
+            ok: false,
+            error: e instanceof Error ? e.message : "Analysis failed",
+          });
         }
       }
     }
@@ -175,13 +195,23 @@ export const runSimulation = createServerFn({ method: "POST" })
     const base = ensembleEngines(runEngineArena(features, null)).lambdas;
     const lh = data.lambdaHome ?? base.home;
     const la = data.lambdaAway ?? base.away;
-    const sim = simulateMatch(lh, la, data.runs, hashString(`${data.matchId}:${lh}:${la}:${data.runs}`));
+    const sim = simulateMatch(
+      lh,
+      la,
+      data.runs,
+      hashString(`${data.matchId}:${lh}:${la}:${data.runs}`),
+    );
     return { match, baseLambdas: base, lambdas: { home: lh, away: la }, simulation: sim };
   });
 
 export const listPredictions = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) =>
-    z.object({ status: z.enum(["ALL", "OPEN", "SETTLED"]).default("ALL"), headlineOnly: z.boolean().default(false) }).parse(input ?? {}),
+    z
+      .object({
+        status: z.enum(["ALL", "OPEN", "SETTLED"]).default("ALL"),
+        headlineOnly: z.boolean().default(false),
+      })
+      .parse(input ?? {}),
   )
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -224,7 +254,10 @@ export const getModelPerformance = createServerFn({ method: "GET" }).handler(asy
   for (const r of rows ?? []) {
     const p = Number(r.probability);
     const hit = r.outcome ? 1 : 0;
-    const add = (m: Map<string, { n: number; brier: number; logLoss: number; hits: number }>, key: string) => {
+    const add = (
+      m: Map<string, { n: number; brier: number; logLoss: number; hits: number }>,
+      key: string,
+    ) => {
       const cur = m.get(key) ?? { n: 0, brier: 0, logLoss: 0, hits: 0 };
       cur.n++;
       cur.brier += Number(r.brier ?? 0);
@@ -268,7 +301,9 @@ export const getAuditRows = createServerFn({ method: "GET" }).handler(async () =
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const { data: rows } = await supabaseAdmin
     .from("predictions")
-    .select("id,match_id,market,selection,probability,outcome,brier,log_loss,settled_at,is_headline")
+    .select(
+      "id,match_id,market,selection,probability,outcome,brier,log_loss,settled_at,is_headline",
+    )
     .eq("status", "SETTLED")
     .order("settled_at", { ascending: false })
     .limit(200);
@@ -301,14 +336,19 @@ export const listEvidenceSnapshots = createServerFn({ method: "GET" }).handler(a
   const { data: matchRows } = ids.length
     ? await supabaseAdmin.from("matches").select(listSelect).in("id", ids)
     : { data: [] };
-  return { snapshots: rows ?? [], matches: Object.fromEntries(mapRows(matchRows ?? []).map((m) => [m.id, m])) };
+  return {
+    snapshots: rows ?? [],
+    matches: Object.fromEntries(mapRows(matchRows ?? []).map((m) => [m.id, m])),
+  };
 });
 
 export const listEngineSnapshots = createServerFn({ method: "GET" }).handler(async () => {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const { data: rows } = await supabaseAdmin
     .from("snapshots")
-    .select("id,match_id,created_at,engines,conflicts,consensus,stability,data_quality,version,verdict")
+    .select(
+      "id,match_id,created_at,engines,conflicts,consensus,stability,data_quality,version,verdict",
+    )
     .order("created_at", { ascending: false })
     .limit(15);
   const ids = [...new Set((rows ?? []).map((r) => r.match_id))];
@@ -316,5 +356,8 @@ export const listEngineSnapshots = createServerFn({ method: "GET" }).handler(asy
   const { data: matchRows } = ids.length
     ? await supabaseAdmin.from("matches").select(listSelect).in("id", ids)
     : { data: [] };
-  return { snapshots: rows ?? [], matches: Object.fromEntries(mapRows(matchRows ?? []).map((m) => [m.id, m])) };
+  return {
+    snapshots: rows ?? [],
+    matches: Object.fromEntries(mapRows(matchRows ?? []).map((m) => [m.id, m])),
+  };
 });

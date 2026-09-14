@@ -139,7 +139,9 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
-    font-feature-settings: "ss01" on, "cv01" on;
+    font-feature-settings:
+      "ss01" on,
+      "cv01" on;
   }
 
   /* Numerals in tables/metrics must align vertically. */

@@ -73,13 +73,14 @@ export async function ingestOpenFootball(limitSeasons?: string[]) {
       }
 
       const names = [...new Set(matches.flatMap((m) => [m.team1, m.team2]))];
-      await supabaseAdmin
+      await supabaseAdmin.from("teams").upsert(
+        names.map((n) => ({ name: n, slug: slugify(n), country: ds.country })),
+        { onConflict: "name" },
+      );
+      const { data: teamRows } = await supabaseAdmin
         .from("teams")
-        .upsert(
-          names.map((n) => ({ name: n, slug: slugify(n), country: ds.country })),
-          { onConflict: "name" },
-        );
-      const { data: teamRows } = await supabaseAdmin.from("teams").select("id,name").in("name", names);
+        .select("id,name")
+        .in("name", names);
       const teamId = new Map((teamRows ?? []).map((t) => [t.name, t.id]));
 
       const rows = matches
@@ -105,11 +106,9 @@ export async function ingestOpenFootball(limitSeasons?: string[]) {
         .filter((r): r is NonNullable<typeof r> => r !== null);
 
       for (let i = 0; i < rows.length; i += 300) {
-        const { error } = await supabaseAdmin
-          .from("matches")
-          .upsert(rows.slice(i, i + 300), {
-            onConflict: "competition_id,home_team_id,away_team_id,kickoff",
-          });
+        const { error } = await supabaseAdmin.from("matches").upsert(rows.slice(i, i + 300), {
+          onConflict: "competition_id,home_team_id,away_team_id,kickoff",
+        });
         if (error) detail.push(`${season} ${ds.code}: ${error.message}`);
       }
       total += rows.length;
@@ -185,7 +184,11 @@ function toDTO(r: MatchRow): MatchDTO {
 }
 
 export async function getMatchDTO(id: string): Promise<MatchDTO | null> {
-  const { data } = await supabaseAdmin.from("matches").select(MATCH_SELECT).eq("id", id).maybeSingle();
+  const { data } = await supabaseAdmin
+    .from("matches")
+    .select(MATCH_SELECT)
+    .eq("id", id)
+    .maybeSingle();
   return data ? toDTO(data as unknown as MatchRow) : null;
 }
 
@@ -254,7 +257,9 @@ export async function resolveFixtures(query: string, limit = 8) {
 
   // Prefer upcoming fixtures, then most recent.
   const now = Date.now();
-  const upcoming = rows.filter((r) => new Date(r.kickoff).getTime() >= now).sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+  const upcoming = rows
+    .filter((r) => new Date(r.kickoff).getTime() >= now)
+    .sort((a, b) => a.kickoff.localeCompare(b.kickoff));
   const past = rows.filter((r) => new Date(r.kickoff).getTime() < now);
   return {
     fixtures: [...upcoming, ...past].slice(0, limit),
@@ -410,7 +415,9 @@ export async function settleAll() {
     .select("id,ft_home,ft_away")
     .eq("status", "FINISHED")
     .not("ft_home", "is", null);
-  const scores = new Map((finished ?? []).map((m) => [m.id, [m.ft_home as number, m.ft_away as number]]));
+  const scores = new Map(
+    (finished ?? []).map((m) => [m.id, [m.ft_home as number, m.ft_away as number]]),
+  );
 
   let settled = 0;
   for (const table of ["predictions", "engine_predictions"] as const) {

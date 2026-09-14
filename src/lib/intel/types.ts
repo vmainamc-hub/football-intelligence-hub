@@ -49,14 +49,18 @@ export const MARKET_LABELS: Record<Market, string> = {
 export const MARKET_GROUPS: { group: string; markets: Market[] }[] = [
   { group: "Match result", markets: ["home", "draw", "away"] },
   { group: "Double chance", markets: ["dc1x", "dcx2", "dc12"] },
-  { group: "Total goals", markets: ["over05", "over15", "over25", "over35", "under05", "under15", "under25", "under35"] },
+  {
+    group: "Total goals",
+    markets: ["over05", "over15", "over25", "over35", "under05", "under15", "under25", "under35"],
+  },
   { group: "Both teams to score", markets: ["bttsYes", "bttsNo"] },
   { group: "Team goals", markets: ["homeOver05", "homeOver15", "awayOver05", "awayOver15"] },
 ];
 
 export type MarketSurface = Partial<Record<Market, number>>;
 
-export type EngineStatus = "OK" | "DATA_SOURCE_UNAVAILABLE" | "NOT_CONFIGURED" | "INSUFFICIENT_DATA";
+export type EngineStatus =
+  "OK" | "DATA_SOURCE_UNAVAILABLE" | "NOT_CONFIGURED" | "INSUFFICIENT_DATA";
 
 export type EngineOutput = {
   id: string;

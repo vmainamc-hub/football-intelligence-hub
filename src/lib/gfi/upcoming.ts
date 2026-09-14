@@ -33,10 +33,11 @@ function kickoffInstant(match: MatchRow) {
 export function getUpcomingFixtures(all: FreeLeague[], limit = 18) {
   const now = Date.now();
   const today = todayKenya();
-  const items = all.flatMap((group) => group.matches
-    .filter((match) => match.hg === undefined && match.ag === undefined)
-    .filter((match) => dateKey(match.date) >= today)
-    .map((match) => ({ ...match, league: group.league, code: group.code, season: group.season }))
+  const items = all.flatMap((group) =>
+    group.matches
+      .filter((match) => match.hg === undefined && match.ag === undefined)
+      .filter((match) => dateKey(match.date) >= today)
+      .map((match) => ({ ...match, league: group.league, code: group.code, season: group.season })),
   );
 
   return items

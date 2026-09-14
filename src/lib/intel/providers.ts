@@ -7,7 +7,8 @@
  * the analysis pipeline or the UI.
  */
 
-export type ProviderStatus = "CONNECTED" | "NOT_CONFIGURED" | "TEMPORARILY_UNAVAILABLE" | "DATA_NOT_AVAILABLE";
+export type ProviderStatus =
+  "CONNECTED" | "NOT_CONFIGURED" | "TEMPORARILY_UNAVAILABLE" | "DATA_NOT_AVAILABLE";
 
 export type ProviderDescriptor = {
   id: string;
@@ -99,7 +100,11 @@ export type ProviderHealth = ProviderDescriptor & {
 export function describeProviders(env: Record<string, string | undefined>): ProviderHealth[] {
   return PROVIDERS.map((p) => {
     if (!p.requiresKey) {
-      return { ...p, status: "CONNECTED" as ProviderStatus, detail: "Free source — no credentials required" };
+      return {
+        ...p,
+        status: "CONNECTED" as ProviderStatus,
+        detail: "Free source — no credentials required",
+      };
     }
     const key = p.envKey ? env[p.envKey] : undefined;
     return key

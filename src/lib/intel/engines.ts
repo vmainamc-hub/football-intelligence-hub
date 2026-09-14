@@ -22,7 +22,17 @@ function unavailable(
   status: EngineOutput["status"],
   detail: string,
 ): EngineOutput {
-  return { id, name, family, status, statusDetail: detail, weight: 0, confidence: 0, markets: {}, notes: [detail] };
+  return {
+    id,
+    name,
+    family,
+    status,
+    statusDetail: detail,
+    weight: 0,
+    confidence: 0,
+    markets: {},
+    notes: [detail],
+  };
 }
 
 export function runEngineArena(f: Features, model: TrainedModel | null): EngineOutput[] {
@@ -93,7 +103,9 @@ export function runEngineArena(f: Features, model: TrainedModel | null): EngineO
       confidence: Math.min(0.9, (home.home.played + away.away.played) / 26),
       lambdas: { home: bound(lh), away: bound(la) },
       markets: ok ? surface(lh, la, { rho: -0.04 }) : {},
-      notes: [`${home.name} at home: ${home.home.played} matches; ${away.name} away: ${away.away.played} matches`],
+      notes: [
+        `${home.name} at home: ${home.home.played} matches; ${away.name} away: ${away.away.played} matches`,
+      ],
     });
   }
 
@@ -186,9 +198,15 @@ export function runEngineArena(f: Features, model: TrainedModel | null): EngineO
     const n = f.h2h.matches.length;
     if (n >= 3) {
       const hg =
-        f.h2h.matches.reduce((a, m) => a + (m.homeId === f.target.homeId ? m.ftHome : m.ftAway), 0) / n;
+        f.h2h.matches.reduce(
+          (a, m) => a + (m.homeId === f.target.homeId ? m.ftHome : m.ftAway),
+          0,
+        ) / n;
       const ag =
-        f.h2h.matches.reduce((a, m) => a + (m.homeId === f.target.homeId ? m.ftAway : m.ftHome), 0) / n;
+        f.h2h.matches.reduce(
+          (a, m) => a + (m.homeId === f.target.homeId ? m.ftAway : m.ftHome),
+          0,
+        ) / n;
       const lh = shrink(hg, lg.h, n, 4);
       const la = shrink(ag, lg.a, n, 4);
       engines.push({
@@ -200,7 +218,9 @@ export function runEngineArena(f: Features, model: TrainedModel | null): EngineO
         confidence: Math.min(0.6, n / 10),
         lambdas: { home: bound(lh), away: bound(la) },
         markets: surface(lh, la),
-        notes: [`${n} stored meetings — ${f.h2h.homeWins}W / ${f.h2h.draws}D / ${f.h2h.awayWins}L for ${home.name}`],
+        notes: [
+          `${n} stored meetings — ${f.h2h.homeWins}W / ${f.h2h.draws}D / ${f.h2h.awayWins}L for ${home.name}`,
+        ],
       });
     } else {
       engines.push(

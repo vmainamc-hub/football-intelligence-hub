@@ -71,7 +71,11 @@ export function normalise(m: MarketSurface) {
   }
 }
 
-export function blendWithSimulation(ens: MarketSurface, sim: MarketSurface, wSim = 0.4): MarketSurface {
+export function blendWithSimulation(
+  ens: MarketSurface,
+  sim: MarketSurface,
+  wSim = 0.4,
+): MarketSurface {
   const out: MarketSurface = {};
   for (const market of MARKETS) {
     const a = ens[market];
@@ -90,7 +94,9 @@ export function detectConflicts(engines: EngineOutput[]): Conflict[] {
   for (const market of MARKETS) {
     const pts = active
       .map((e) => ({ engine: e.name, probability: e.markets[market] }))
-      .filter((p): p is { engine: string; probability: number } => typeof p.probability === "number");
+      .filter(
+        (p): p is { engine: string; probability: number } => typeof p.probability === "number",
+      );
     if (pts.length < 3) continue;
     const values = pts.map((p) => p.probability);
     const spread = Math.max(...values) - Math.min(...values);
@@ -139,7 +145,10 @@ export function computeStability(
     byMarket[market] = stability;
     scores.push(stability);
   }
-  return { overall: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0, byMarket };
+  return {
+    overall: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0,
+    byMarket,
+  };
 }
 
 export function computeDataQuality(f: Features, engines: EngineOutput[]) {
@@ -169,7 +178,11 @@ export function computeDataQuality(f: Features, engines: EngineOutput[]) {
       value: engines.filter((e) => e.status === "OK").length / engines.length,
       detail: `${engines.filter((e) => e.status === "OK").length} of ${engines.length} engines live`,
     },
-    { key: "Lineups & injuries", value: 0, detail: "DATA SOURCE UNAVAILABLE — no provider connected" },
+    {
+      key: "Lineups & injuries",
+      value: 0,
+      detail: "DATA SOURCE UNAVAILABLE — no provider connected",
+    },
     { key: "xG feed", value: 0, detail: "DATA SOURCE UNAVAILABLE — no provider connected" },
     { key: "Market odds", value: 0, detail: "NOT CONFIGURED — no odds provider connected" },
   ];
@@ -196,7 +209,12 @@ export function discoverOutcomes(
     // answer survives perturbation. Near-certain markets (over 0.5) are
     // deliberately not rewarded for being trivially likely.
     const informative = 1 - Math.abs(p - 0.72) / 0.72;
-    const score = p * 0.42 + consensus * 0.22 + stability * 0.2 + dataQuality * 0.1 + Math.max(0, informative) * 0.06;
+    const score =
+      p * 0.42 +
+      consensus * 0.22 +
+      stability * 0.2 +
+      dataQuality * 0.1 +
+      Math.max(0, informative) * 0.06;
     out.push({
       market,
       label: MARKET_LABELS[market],
@@ -224,7 +242,8 @@ export function buildVerdict(
     return {
       kind: "INSUFFICIENT_INTELLIGENCE",
       headline: "INSUFFICIENT INTELLIGENCE",
-      detail: "Too few independent engines could run on the stored evidence. No prediction is issued.",
+      detail:
+        "Too few independent engines could run on the stored evidence. No prediction is issued.",
     };
   }
   if (dataQuality < 0.32) {
@@ -238,7 +257,8 @@ export function buildVerdict(
     return {
       kind: "HIGH_MODEL_CONFLICT",
       headline: "HIGH MODEL CONFLICT",
-      detail: "Independent engines disagree severely and the surface is unstable. Review the contradiction panel before acting.",
+      detail:
+        "Independent engines disagree severely and the surface is unstable. Review the contradiction panel before acting.",
       outcome: best,
     };
   }
@@ -246,7 +266,8 @@ export function buildVerdict(
     return {
       kind: "NO_STRONG_EDGE",
       headline: "NO STRONG EDGE",
-      detail: "Nothing in the outcome space clears the strength, consensus and stability thresholds. The honest answer is that this match is not readable from the available evidence.",
+      detail:
+        "Nothing in the outcome space clears the strength, consensus and stability thresholds. The honest answer is that this match is not readable from the available evidence.",
       outcome: best,
     };
   }

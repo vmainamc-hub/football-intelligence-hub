@@ -467,7 +467,6 @@ confidence
 corroboration
 conflict status
 
-
 If two sources disagree, do NOT silently average them.
 
 Show:
@@ -730,13 +729,12 @@ If engines disagree significantly, identify it.
 
 Example:
 
-STATISTICAL       → Lyon
-xG                → Lyon
-SIMULATION        → Lyon
-TACTICAL          → Monaco
-PLAYER IMPACT     → Monaco
-MARKET            → Lyon
-
+STATISTICAL → Lyon
+xG → Lyon
+SIMULATION → Lyon
+TACTICAL → Monaco
+PLAYER IMPACT → Monaco
+MARKET → Lyon
 
 The system should say:
 
@@ -766,12 +764,10 @@ internal probability
 vs
 market implied probability
 
-
 Example:
 
 Market: Lyon 68%
 Internal model: Lyon 46%
-
 
 This should trigger:
 
@@ -929,7 +925,6 @@ PREDICTION
 vs
 ACTUAL RESULT
 
-
 Evaluate:
 
 calibration
@@ -999,7 +994,6 @@ Premier League
 BTTS
 2,140 predictions
 Brier: 0.211
-
 
 The system can learn to trust the better-calibrated model more.
 
@@ -1122,12 +1116,11 @@ The user should see progressive intelligence rather than a blank screen.
 Example:
 
 MATCH RESOLVED ✓
-TEAM DATA       ✓
-ODDS            ✓
-NEWS            ███████░░
-LINEUPS         █████░░░░░
-SIMULATION      RUNNING
-
+TEAM DATA ✓
+ODDS ✓
+NEWS ███████░░
+LINEUPS █████░░░░░
+SIMULATION RUNNING
 
 Then progressively populate the interface.
 

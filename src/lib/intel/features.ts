@@ -52,7 +52,12 @@ export type TeamProfile = {
   home: TeamSplit;
   away: TeamSplit;
   elo: number;
-  form: { results: ("W" | "D" | "L")[]; weightedScored: number; weightedConceded: number; points: number };
+  form: {
+    results: ("W" | "D" | "L")[];
+    weightedScored: number;
+    weightedConceded: number;
+    points: number;
+  };
   restDays: number | null;
   matchesInLast14Days: number;
   lastMatchDate: string | null;
@@ -75,7 +80,13 @@ export type Features = {
   league: LeagueBaseline;
   home: TeamProfile;
   away: TeamProfile;
-  h2h: { matches: HistMatch[]; homeWins: number; draws: number; awayWins: number; avgTotal: number };
+  h2h: {
+    matches: HistMatch[];
+    homeWins: number;
+    draws: number;
+    awayWins: number;
+    avgTotal: number;
+  };
   historyCount: number;
   cutoff: string;
 };
@@ -150,8 +161,12 @@ function profile(
 ): TeamProfile {
   const rows = teamRows(history, teamId);
   const recent = rows.slice(0, window);
-  const asHome = recent.filter((m) => m.homeId === teamId).map((m) => ({ gf: m.ftHome, ga: m.ftAway }));
-  const asAway = recent.filter((m) => m.awayId === teamId).map((m) => ({ gf: m.ftAway, ga: m.ftHome }));
+  const asHome = recent
+    .filter((m) => m.homeId === teamId)
+    .map((m) => ({ gf: m.ftHome, ga: m.ftAway }));
+  const asAway = recent
+    .filter((m) => m.awayId === teamId)
+    .map((m) => ({ gf: m.ftAway, ga: m.ftHome }));
   const all = recent.map((m) =>
     m.homeId === teamId ? { gf: m.ftHome, ga: m.ftAway } : { gf: m.ftAway, ga: m.ftHome },
   );

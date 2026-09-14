@@ -3,7 +3,11 @@ import { cn } from "@/lib/utils";
 
 /** Page frame: consistent gutters and max width across every area. */
 export function Page({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("mx-auto w-full max-w-[1400px] px-5 py-7 sm:px-7 lg:px-9", className)}>{children}</div>;
+  return (
+    <div className={cn("mx-auto w-full max-w-[1400px] px-5 py-7 sm:px-7 lg:px-9", className)}>
+      {children}
+    </div>
+  );
 }
 
 export function PageHeader({
@@ -23,7 +27,9 @@ export function PageHeader({
         <p className="label-xs">{eyebrow}</p>
         <h1 className="mt-1.5 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
         {description ? (
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">{description}</p>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            {description}
+          </p>
         ) : null}
       </div>
       {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
@@ -227,7 +233,11 @@ export function Loading({ rows = 4, className }: { rows?: number; className?: st
   return (
     <div className={cn("space-y-2.5", className)}>
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="h-3 animate-pulse rounded bg-muted" style={{ width: `${92 - i * 11}%` }} />
+        <div
+          key={i}
+          className="h-3 animate-pulse rounded bg-muted"
+          style={{ width: `${92 - i * 11}%` }}
+        />
       ))}
     </div>
   );
@@ -235,7 +245,9 @@ export function Loading({ rows = 4, className }: { rows?: number; className?: st
 
 export function ErrorNote({ message }: { message: string }) {
   return (
-    <div className="panel border-destructive/40 bg-destructive/8 px-4 py-3 text-sm text-destructive">{message}</div>
+    <div className="panel border-destructive/40 bg-destructive/8 px-4 py-3 text-sm text-destructive">
+      {message}
+    </div>
   );
 }
 
@@ -243,7 +255,9 @@ export function ErrorNote({ message }: { message: string }) {
 export function DataTable({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div className="-mx-4 -mb-4 overflow-x-auto">
-      <table className={cn("w-full min-w-[640px] border-collapse text-sm", className)}>{children}</table>
+      <table className={cn("w-full min-w-[640px] border-collapse text-sm", className)}>
+        {children}
+      </table>
     </div>
   );
 }
@@ -262,5 +276,9 @@ export function Th({ children, className }: { children?: ReactNode; className?: 
 }
 
 export function Td({ children, className }: { children?: ReactNode; className?: string }) {
-  return <td className={cn("border-b border-border/60 px-4 py-2.5 align-middle", className)}>{children}</td>;
+  return (
+    <td className={cn("border-b border-border/60 px-4 py-2.5 align-middle", className)}>
+      {children}
+    </td>
+  );
 }

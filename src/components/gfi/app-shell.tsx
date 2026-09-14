@@ -39,7 +39,10 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav className="flex flex-col gap-0.5 p-2">
       {NAV.map((item) => {
-        const active = item.to === "/" ? pathname === "/" || pathname.startsWith("/match") : pathname.startsWith(item.to);
+        const active =
+          item.to === "/"
+            ? pathname === "/" || pathname.startsWith("/match")
+            : pathname.startsWith(item.to);
         const Icon = item.icon;
         return (
           <Link
@@ -53,10 +56,15 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
                 : "text-muted-foreground hover:bg-muted hover:text-foreground",
             )}
           >
-            <Icon className={cn("size-4 shrink-0", active ? "text-primary" : "")} strokeWidth={1.75} />
+            <Icon
+              className={cn("size-4 shrink-0", active ? "text-primary" : "")}
+              strokeWidth={1.75}
+            />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{item.label}</span>
-              <span className="block truncate text-[0.6875rem] text-muted-foreground">{item.hint}</span>
+              <span className="block truncate text-[0.6875rem] text-muted-foreground">
+                {item.hint}
+              </span>
             </span>
             {active ? <span className="size-1.5 rounded-full bg-primary" /> : null}
           </Link>

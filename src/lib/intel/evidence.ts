@@ -10,11 +10,7 @@ export function buildEvidence(f: Features, providers: ProviderHealth[]): Evidenc
   const items: EvidenceItem[] = [];
   const now = f.cutoff;
 
-  const push = (
-    claim: string,
-    category: string,
-    opts: Partial<EvidenceItem> = {},
-  ) =>
+  const push = (claim: string, category: string, opts: Partial<EvidenceItem> = {}) =>
     items.push({
       claim,
       category,
@@ -42,7 +38,10 @@ export function buildEvidence(f: Features, providers: ProviderHealth[]): Evidenc
         { confidence: Math.min(0.9, venue.played / 10) },
       );
     }
-    push(`${team.name} Elo rating ${Math.round(team.elo)} after all stored results before kickoff.`, "Team strength");
+    push(
+      `${team.name} Elo rating ${Math.round(team.elo)} after all stored results before kickoff.`,
+      "Team strength",
+    );
     if (team.form.results.length) {
       push(
         `${team.name} recent results ${team.form.results.join("-")} (${team.form.points} points from ${team.form.results.length}).`,
@@ -82,7 +81,8 @@ export function buildEvidence(f: Features, providers: ProviderHealth[]): Evidenc
     );
   } else {
     items.push({
-      claim: "No stored meetings between these teams. Head-to-head evidence is unavailable rather than estimated.",
+      claim:
+        "No stored meetings between these teams. Head-to-head evidence is unavailable rather than estimated.",
       category: "Head-to-head",
       source: "System",
       sourceKind: "SYSTEM",

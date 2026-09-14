@@ -25,7 +25,8 @@ function bttsProbability(result: AuthoritativeMatchAnalysis) {
 
 export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): MarketSignal[] {
   const { home, draw, away } = result.probabilities;
-  const winner = home >= draw && home >= away ? result.home.team : away >= draw ? result.away.team : "DRAW";
+  const winner =
+    home >= draw && home >= away ? result.home.team : away >= draw ? result.away.team : "DRAW";
   const winnerProbability = Math.max(home, draw, away);
   const ordered = [
     { selection: winner === "DRAW" ? "DRAW" : `${winner} WIN`, probability: winnerProbability },
@@ -34,14 +35,16 @@ export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): Ma
     { selection: "12", probability: home + away },
   ];
 
-  const map: MarketSignal[] = [{
-    market: "1X2",
-    selection: ordered[0].selection,
-    probability: ordered[0].probability,
-    confidence: result.confidence,
-    tier: "PRIMARY",
-    rationale: `Highest core 1X2 probability: ${pct(ordered[0].probability)}%.`,
-  }];
+  const map: MarketSignal[] = [
+    {
+      market: "1X2",
+      selection: ordered[0].selection,
+      probability: ordered[0].probability,
+      confidence: result.confidence,
+      tier: "PRIMARY",
+      rationale: `Highest core 1X2 probability: ${pct(ordered[0].probability)}%.`,
+    },
+  ];
 
   const doubleChance = ordered.slice(1).sort((a, b) => b.probability - a.probability)[0];
   map.push({
@@ -55,7 +58,8 @@ export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): Ma
 
   const dnbHome = home / Math.max(0.0001, home + away);
   const dnbAway = away / Math.max(0.0001, home + away);
-  const dnbSelection = dnbHome >= dnbAway ? `DNB — ${result.home.team}` : `DNB — ${result.away.team}`;
+  const dnbSelection =
+    dnbHome >= dnbAway ? `DNB — ${result.home.team}` : `DNB — ${result.away.team}`;
   const dnbProbability = Math.max(dnbHome, dnbAway);
   map.push({
     market: "DRAW NO BET",

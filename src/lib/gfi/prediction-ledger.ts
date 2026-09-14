@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { MatchRow } from "./intelligence";
 import type { AuthoritativeMatchAnalysis } from "./authoritative";
 
@@ -29,10 +30,17 @@ const LEGACY_KEYS = ["gfi_prediction_ledger_v2", "gfi_prediction_ledger_v1"];
 const argmax = (p: LedgerPrediction["probabilities"]): LedgerPrediction["predictedOutcome"] =>
   p.home >= p.draw && p.home >= p.away ? "H" : p.away >= p.draw ? "A" : "D";
 
-function isBrowser() { return typeof window !== "undefined" && !!window.localStorage; }
+function isBrowser() {
+  return typeof window !== "undefined" && !!window.localStorage;
+}
 function readRaw(key: string): unknown[] {
   if (!isBrowser()) return [];
-  try { const value = JSON.parse(window.localStorage.getItem(key) ?? "[]"); return Array.isArray(value) ? value : []; } catch { return []; }
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
 }
 
 function migrate(value: any): LedgerPrediction {
@@ -51,7 +59,14 @@ function migrate(value: any): LedgerPrediction {
     decision: value.decision ?? "NO STRONG EDGE",
     confidence: Number(value.confidence ?? 0),
     quality: Number(value.quality ?? 0),
-    consensus: value.consensus ?? { home: probabilities.home, draw: probabilities.draw, away: probabilities.away, agreement: 0, conflict: 1, leader: "none" },
+    consensus: value.consensus ?? {
+      home: probabilities.home,
+      draw: probabilities.draw,
+      away: probabilities.away,
+      agreement: 0,
+      conflict: 1,
+      leader: "none",
+    },
     robustness: value.robustness ?? { score: value.quality ?? 0, label: "FRAGILE" },
     risk: value.risk ?? "HIGH",
     evidence: value.evidence ?? [],
@@ -76,7 +91,10 @@ export function readLedger(): LedgerPrediction[] {
   return [];
 }
 
-export function saveAuthoritativePrediction(analysis: AuthoritativeMatchAnalysis, fixture: MatchRow & { league?: string; code?: string }) {
+export function saveAuthoritativePrediction(
+  analysis: AuthoritativeMatchAnalysis,
+  fixture: MatchRow & { league?: string; code?: string },
+) {
   if (!isBrowser()) return null;
   const row: LedgerPrediction = {
     id: crypto.randomUUID(),
@@ -104,7 +122,11 @@ export function saveAuthoritativePrediction(analysis: AuthoritativeMatchAnalysis
 
 export function settlePrediction(id: string, outcome: "H" | "D" | "A") {
   if (!isBrowser()) return [] as LedgerPrediction[];
-  const next = readLedger().map((p) => p.id === id ? { ...p, status: "SETTLED" as const, outcome, correct: outcome === p.predictedOutcome } : p);
+  const next = readLedger().map((p) =>
+    p.id === id
+      ? { ...p, status: "SETTLED" as const, outcome, correct: outcome === p.predictedOutcome }
+      : p,
+  );
   window.localStorage.setItem(KEY, JSON.stringify(next));
   return next;
 }
@@ -113,7 +135,13 @@ export function autoSettleCompleted() {
   if (!isBrowser()) return [] as LedgerPrediction[];
   const next = readLedger().map((p) => {
     const actual = p.fixture.result as "H" | "D" | "A" | undefined;
-    if (p.status === "OPEN" && actual) return { ...p, status: "SETTLED" as const, outcome: actual, correct: actual === p.predictedOutcome };
+    if (p.status === "OPEN" && actual)
+      return {
+        ...p,
+        status: "SETTLED" as const,
+        outcome: actual,
+        correct: actual === p.predictedOutcome,
+      };
     return p;
   });
   window.localStorage.setItem(KEY, JSON.stringify(next));
@@ -123,14 +151,26 @@ export function autoSettleCompleted() {
 export function calibrationReport() {
   const settled = readLedger().filter((p) => p.status === "SETTLED" && p.outcome);
   if (!settled.length) return { settled: 0, wins: 0, hitRate: 0, brier: 0, logLoss: 0 };
-  let brier = 0, logLoss = 0;
+  let brier = 0,
+    logLoss = 0;
   for (const p of settled) {
-    const q = p.outcome === "H" ? p.probabilities.home : p.outcome === "D" ? p.probabilities.draw : p.probabilities.away;
+    const q =
+      p.outcome === "H"
+        ? p.probabilities.home
+        : p.outcome === "D"
+          ? p.probabilities.draw
+          : p.probabilities.away;
     brier += (1 - q) ** 2;
     logLoss -= Math.log(Math.max(0.0001, q));
   }
   const wins = settled.filter((p) => p.correct).length;
-  return { settled: settled.length, wins, hitRate: wins / settled.length, brier: brier / settled.length, logLoss: logLoss / settled.length };
+  return {
+    settled: settled.length,
+    wins,
+    hitRate: wins / settled.length,
+    brier: brier / settled.length,
+    logLoss: logLoss / settled.length,
+  };
 }
 
 export function clearLedger() {
