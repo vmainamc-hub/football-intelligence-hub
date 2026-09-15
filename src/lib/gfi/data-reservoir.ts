@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { MatchRow } from "./intelligence";
+import { canonicalCompetitionName, canonicalTeamKey, canonicalTeamName } from "./identity";
 
 export type ReservoirMatch = MatchRow & {
   reservoirId?: string;
@@ -153,7 +154,8 @@ async function resolveCompetitions(db: SupabaseClient, rows: MatchRow[]) {
   const ids = new Map<string, string>();
   const unique = new Map<string, { code: string; season: string; name: string; source: string }>();
   for (const row of rows) {
-    const name = row.league ?? "Worldwide Football";
+    // Equivalent competition names collapse to one competition context.
+    const name = canonicalCompetitionName(row.league);
     const code = row.code ?? `G${simpleHash(name).slice(0, 7).toUpperCase()}`;
     const season = seasonCode(row.date);
     unique.set(`${code}|${season}`, { code, season, name, source: row.source ?? "unknown" });
