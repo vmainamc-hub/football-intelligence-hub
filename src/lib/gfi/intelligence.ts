@@ -3,6 +3,12 @@ import { fixtureIdentity, type ExternalFixture } from "./fixture-sources";
 import { fetchUniversalFixtures } from "./universal-sources";
 import { syncReservoir } from "./data-reservoir";
 import { analyzeAuthoritatively } from "./authoritative";
+import {
+  canonicalCompetitionName,
+  canonicalTeamName,
+  parseResultCell,
+  parseScoreCell,
+} from "./identity";
 
 export type MatchRow = {
   date: string;
