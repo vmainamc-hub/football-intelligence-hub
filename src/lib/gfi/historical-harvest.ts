@@ -1,6 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { ingestReservoirMatches } from "./data-reservoir";
 import type { MatchRow } from "./intelligence";
+import {
+  canonicalCompetitionName,
+  canonicalTeamName,
+  parseResultCell,
+  parseScoreCell,
+} from "./identity";
 
 const BASE_URL = "https://www.football-data.co.uk/mmz4281";
 const CODES = [
@@ -37,12 +43,12 @@ function parseCsv(csv: string, code: string, league: string): MatchRow[] {
     const c = splitCsv(line);
     const home = (c[hi] ?? "").trim(), away = (c[ai] ?? "").trim(), date = (c[di] ?? "").trim();
     if (!home || !away || !date) return [];
-    const hgValue = Number((c[hgi] ?? "").trim()), agValue = Number((c[agi] ?? "").trim());
-    const hg = Number.isFinite(hgValue) ? hgValue : undefined, ag = Number.isFinite(agValue) ? agValue : undefined;
-    const result = (c[ri] ?? "").trim();
-    return [{ date, time: (c[ti] ?? "").trim() || undefined, home, away, hg, ag,
-      result: result === "H" || result === "D" || result === "A" ? result : undefined,
-      league, code, source: "football-data" } satisfies MatchRow];
+    // Blank FTHG/FTAG means "not played yet" — never score 0.
+    const hg = parseScoreCell(c[hgi]), ag = parseScoreCell(c[agi]);
+    return [{ date, time: (c[ti] ?? "").trim() || undefined,
+      home: canonicalTeamName(home), away: canonicalTeamName(away), hg, ag,
+      result: parseResultCell(c[ri]),
+      league: canonicalCompetitionName(league), code, source: "football-data" } satisfies MatchRow];
   });
 }
 

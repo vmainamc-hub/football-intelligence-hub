@@ -3,6 +3,12 @@ import { fixtureIdentity, type ExternalFixture } from "./fixture-sources";
 import { fetchUniversalFixtures } from "./universal-sources";
 import { syncReservoir } from "./data-reservoir";
 import { analyzeAuthoritatively } from "./authoritative";
+import {
+  canonicalCompetitionName,
+  canonicalTeamName,
+  parseResultCell,
+  parseScoreCell,
+} from "./identity";
 
 export type MatchRow = {
   date: string;
@@ -109,17 +115,19 @@ function parseCsv(text: string): MatchRow[] {
     .slice(1)
     .map((line) => {
       const c = split(line);
-      const hg = Number((c[hgi] ?? "").trim()),
-        ag = Number((c[agi] ?? "").trim()),
-        r = (c[ri] ?? "").trim();
+      // CRITICAL: blank FTHG/FTAG cells mean the fixture has not been played.
+      // Number("") is 0, so parseScoreCell keeps them undefined and future
+      // fixtures never enter the historical model as completed 0-0 matches.
+      const home = (c[hi] ?? "").trim(),
+        away = (c[ai] ?? "").trim();
       return {
         date: (c[di] ?? "").trim(),
         time: (c[ti] ?? "").trim() || undefined,
-        home: (c[hi] ?? "").trim(),
-        away: (c[ai] ?? "").trim(),
-        hg: Number.isFinite(hg) ? hg : undefined,
-        ag: Number.isFinite(ag) ? ag : undefined,
-        result: r === "H" || r === "D" || r === "A" ? r : undefined,
+        home: canonicalTeamName(home),
+        away: canonicalTeamName(away),
+        hg: parseScoreCell(c[hgi]),
+        ag: parseScoreCell(c[agi]),
+        result: parseResultCell(c[ri]),
         source: "football-data",
       } satisfies MatchRow;
     })
@@ -144,29 +152,10 @@ function sourceDateKey(value: string) {
   const y = m[3].length === 2 ? Number(m[3]) + 2000 : Number(m[3]);
   return `${String(y).padStart(4, "0")}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
 }
+// Single competition-identity source of truth: "Spanish La Liga" and
+// "La Liga" resolve to one competition context everywhere.
 function normaliseLeague(value: string) {
-  const n = value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-  const a: Record<string, string> = {
-    "liga portugal": "Primeira Liga",
-    "liga portugal betclic": "Primeira Liga",
-    "portuguese primeira liga": "Primeira Liga",
-    "primeira liga": "Primeira Liga",
-    "english premier league": "Premier League",
-    "english championship": "Championship",
-    "german bundesliga": "Bundesliga",
-    "2 bundesliga": "2. Bundesliga",
-    "spanish laliga": "La Liga",
-    "spanish la liga": "La Liga",
-    "italian serie a": "Serie A",
-    "french ligue 1": "Ligue 1",
-    "dutch eredivisie": "Eredivisie",
-  };
-  return a[n] ?? (value.trim() || "Worldwide Football");
+  return canonicalCompetitionName(value);
 }
 function dynamicCode(league: string) {
   let h = 0;
