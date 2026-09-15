@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/fixture-sync",
+      "schedule": "30 3 * * *"
+    }
+  ]
+}

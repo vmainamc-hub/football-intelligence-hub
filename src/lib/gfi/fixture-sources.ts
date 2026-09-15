@@ -2,8 +2,9 @@ import { createServerFn } from "@tanstack/react-start";
 import type { MatchRow } from "./intelligence";
 import { canonicalCompetitionName, canonicalTeamName, parseScoreCell } from "./identity";
 import { fetchEspnFixtures } from "./espn-sources";
+import { fetchBetikaFixtures } from "./betika-sources";
 
-export type FixtureSourceName = "football-data" | "openfootball" | "sportsdb" | "espn";
+export type FixtureSourceName = "football-data" | "openfootball" | "sportsdb" | "espn" | "betika";
 export type ExternalFixture = MatchRow & {
   source: FixtureSourceName;
   sourceId?: string;
@@ -170,10 +171,16 @@ export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
     for (const result of openfootball)
       if (result.status === "fulfilled") results.push(...result.value);
 
-    const [sportsDb, espn] = await Promise.all([
+    const [betika, sportsDb, espn] = await Promise.all([
+      fetchBetikaFixtures({ data: { dateFrom: data.dateFrom, dateTo: data.dateTo } }),
       collectSportsDb(data.dateFrom, data.dateTo),
       fetchEspnFixtures(data.dateFrom, data.dateTo),
     ]);
+
+    // Betika is deliberately first so its current bookmaker fixture universe
+    // becomes the canonical display row when another source reports the same
+    // scheduled match. It is still never used as a prediction authority.
+    results.push(...betika);
     results.push(...sportsDb);
     results.push(
       ...espn.map((m) => ({
@@ -187,9 +194,6 @@ export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
     return results.filter((match) => {
       const date = sourceDateKey(match.date);
       if (date < data.dateFrom || date > data.dateTo) return false;
-      // Source-independent fixture identity: the same scheduled match should
-      // only be exposed once even when ESPN and TheSportsDB both report it.
-      // Prefer the first source encountered above as the canonical display row.
       const id = `${date}|${match.home.toLowerCase()}|${match.away.toLowerCase()}|${match.time ?? ""}`;
       if (seen.has(id)) return false;
       seen.add(id);

@@ -115,9 +115,6 @@ function parseCsv(text: string): MatchRow[] {
     .slice(1)
     .map((line) => {
       const c = split(line);
-      // CRITICAL: blank FTHG/FTAG cells mean the fixture has not been played.
-      // Number("") is 0, so parseScoreCell keeps them undefined and future
-      // fixtures never enter the historical model as completed 0-0 matches.
       const home = (c[hi] ?? "").trim(),
         away = (c[ai] ?? "").trim();
       return {
@@ -152,8 +149,6 @@ function sourceDateKey(value: string) {
   const y = m[3].length === 2 ? Number(m[3]) + 2000 : Number(m[3]);
   return `${String(y).padStart(4, "0")}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
 }
-// Single competition-identity source of truth: "Spanish La Liga" and
-// "La Liga" resolve to one competition context everywhere.
 function normaliseLeague(value: string) {
   return canonicalCompetitionName(value);
 }
@@ -221,7 +216,7 @@ export async function loadFreeFixtures(): Promise<FreeLeague[]> {
     });
     loaded = addFallbackGroups(loaded, fallback as ExternalFixture[]);
   } catch {
-    // fallback source unavailable, proceed with loaded groups
+    // The fallback layer is additive; the primary free feeds remain usable.
   }
   const reservoirRows = loaded.flatMap((group) =>
     group.matches.map((match) => ({ ...match, league: group.league, code: group.code })),
@@ -246,7 +241,9 @@ export function kickoffKenya(match: MatchRow) {
     m = match.time.match(/^(\d{1,2}):(\d{2})/);
   if (!m) return undefined;
   const offset =
-      match.source === "global-live" || match.source === "sportscore" ? 0 : ukOffsetHours(key),
+      match.source === "global-live" || match.source === "sportscore" || match.source === "betika"
+        ? 0
+        : ukOffsetHours(key),
     minutes = Number(m[1]) * 60 + Number(m[2]) + offset * 60,
     dayShift = Math.floor(minutes / 1440),
     normalized = ((minutes % 1440) + 1440) % 1440;
@@ -287,7 +284,7 @@ export function findFixtures(
       if (af !== bf) return af ? -1 : 1;
       return sourceDateKey(b.date).localeCompare(sourceDateKey(a.date));
     })
-    .slice(0, 48);
+    .slice(0, 96);
 }
 export { analyzeAuthoritatively } from "./authoritative";
 export { analyzeActiveAuthoritatively } from "./authoritative-runtime";
