@@ -114,10 +114,9 @@ export function analyzeActiveAuthoritatively(
   const quality = Math.round(Math.max(20, Math.min(98, rawQuality * 0.78 + 78 * 0.22)));
   const totalSample = base.home.played + base.away.played;
 
-  // Low evidence is a research state, not a terminal prediction state. The
-  // research orchestrator escalates to additional public sources before this
-  // function is called. We therefore never manufacture a "data unavailable"
-  // verdict here; the authoritative result remains usable and traceable.
+  // Research is expected to escalate before this point. A weak evidence state
+  // is not a terminal prediction state and must never be represented with a
+  // synthetic default outcome.
   let decision: AuthoritativeMatchAnalysis["decision"] = "NO STRONG EDGE";
   if (conflict >= 0.24 && top < 0.5) decision = "HIGH MODEL CONFLICT";
   else if (p.home === top && top >= 0.5 && conflict < 0.24) decision = "HOME EDGE";
@@ -139,6 +138,13 @@ export function analyzeActiveAuthoritatively(
       })),
     ),
   ];
+
+  const fallbackPrediction =
+    p.home >= p.draw && p.home >= p.away
+      ? `${base.home.team} lean`
+      : p.away >= p.draw
+        ? `${base.away.team} lean`
+        : "Draw lean";
 
   return {
     ...base,
@@ -170,19 +176,19 @@ export function analyzeActiveAuthoritatively(
           ? `${base.away.team} win`
           : decision === "DRAW LEAN"
             ? "Draw"
-            : base.finalPrediction,
+            : fallbackPrediction,
     aiReasoningPacket: {
       ...base.aiReasoningPacket,
       analysisVersion: "gfi-authoritative-v6.2",
       activeEngineFamilies: ACTIVE_ENGINE_FAMILIES,
       aiRole: "EXPLAINABLE_MULTI_MODEL_SYNTHESIS",
       aiStatus:
-        "The authoritative prediction is produced by a deterministic statistical ensemble with explicit evidence weighting, conflict control and simulation validation. Public research is used to widen evidence coverage; external prediction opinions never silently override the ensemble.",
+        "The authoritative prediction is produced by a deterministic statistical ensemble with explicit evidence weighting, conflict control and simulation validation. Public research widens evidence coverage; external prediction opinions never silently override the ensemble.",
       decisionReason:
         decision === "HIGH MODEL CONFLICT"
           ? "Model disagreement is materially high and no 1X2 outcome reaches the strengthened edge threshold."
           : decision === "NO STRONG EDGE"
-            ? "No 1X2 outcome reaches the edge threshold; the market engine still evaluates all mainstream markets."
+            ? "No 1X2 outcome reaches the edge threshold; the market engine evaluates all mainstream markets using the assembled evidence."
             : "A 1X2 outcome clears the authoritative probability and conflict thresholds.",
       simulation: sim.summary,
       evidenceLedger: ledger,
