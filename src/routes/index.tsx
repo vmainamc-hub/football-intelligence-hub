@@ -8,7 +8,7 @@ import {
   loadFreeFixtures,
   type MatchRow,
 } from "@/lib/gfi/intelligence";
-import { getUpcomingFixtures } from "@/lib/gfi/upcoming";
+import { getUpcomingFixturesByDay } from "@/lib/gfi/upcoming";
 import { searchUniversalFixtures } from "@/lib/gfi/universal-sources";
 
 export const Route = createFileRoute("/")({ component: Home });
@@ -33,10 +33,17 @@ function Home() {
     : (remote.data ?? []).map((m) => ({
         ...m,
         league: m.league ?? "Worldwide Football",
-        code: "GLOBAL",
-        season: "global",
+        code: m.code ?? "GLOBAL",
+        season: m.season ?? "global",
       }));
-  const upcoming = useMemo(() => getUpcomingFixtures(data.data ?? [], 24), [data.data]);
+  // A seven-day calendar replaces the old global top-24 list. This prevents
+  // early-kickoff matches elsewhere in the world from consuming the entire
+  // display budget and hiding important later fixtures.
+  const upcomingDays = useMemo(
+    () => getUpcomingFixturesByDay(data.data ?? [], 7, 100),
+    [data.data],
+  );
+  const totalUpcoming = upcomingDays.reduce((sum, day) => sum + day.matches.length, 0);
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -66,7 +73,7 @@ function Home() {
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search any team or fixture — Braga, Newcastle, Real Madrid vs Barcelona"
+              placeholder="Search any team or fixture — Arsenal, Betis vs Getafe, Real Madrid vs Barcelona"
               className="h-14 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
             />
             {data.isFetching || remote.isFetching ? (
@@ -79,14 +86,12 @@ function Home() {
         {query ? (
           <div className="mt-3 max-w-4xl overflow-hidden rounded-lg border border-border bg-card">
             {results.length ? (
-              results
-                .slice(0, 24)
-                .map((m, i) => (
-                  <FixtureRow
-                    key={`${m.home}-${m.away}-${m.date}-${m.time ?? ""}-${m.source ?? ""}-${m.sourceId ?? i}`}
-                    fixture={m}
-                  />
-                ))
+              results.slice(0, 48).map((m, i) => (
+                <FixtureRow
+                  key={`${m.home}-${m.away}-${m.date}-${m.time ?? ""}-${m.source ?? ""}-${m.sourceId ?? i}`}
+                  fixture={m}
+                />
+              ))
             ) : (
               <div className="p-5 text-sm text-muted-foreground">
                 No fixture found yet in the connected public sources. Try the full team name.
@@ -95,35 +100,50 @@ function Home() {
           </div>
         ) : (
           <section className="mt-10 max-w-5xl">
-            <div className="flex items-end justify-between">
+            <div className="flex items-end justify-between gap-4">
               <div>
-                <div className="label-xs text-primary">UPCOMING</div>
-                <h2 className="mt-1 text-2xl font-semibold">Next matches</h2>
+                <div className="label-xs text-primary">FIXTURE CALENDAR</div>
+                <h2 className="mt-1 text-2xl font-semibold">Today → next 6 days</h2>
               </div>
-              <span className="text-xs text-muted-foreground">
-                {upcoming.length} shown · refreshed every 5 min
+              <span className="text-right text-xs text-muted-foreground">
+                {totalUpcoming} upcoming fixtures · refreshed every 5 min
               </span>
             </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              {upcoming.map((m, i) => (
-                <FixtureRow
-                  key={`${m.home}-${m.away}-${m.date}-${m.time ?? ""}-${m.source ?? ""}-${i}`}
-                  fixture={m}
-                />
+
+            <div className="mt-5 space-y-8">
+              {upcomingDays.map((day) => (
+                <section key={day.date}>
+                  <div className="flex items-baseline justify-between gap-4 border-b border-border pb-2">
+                    <div>
+                      <div className="label-xs text-primary">{day.label}</div>
+                      <div className="mt-0.5 text-sm text-muted-foreground">{day.date}</div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">{day.matches.length} matches</div>
+                  </div>
+                  {day.matches.length ? (
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      {day.matches.map((m, i) => (
+                        <FixtureRow
+                          key={`${day.date}-${m.home}-${m.away}-${m.time ?? ""}-${m.source ?? ""}-${m.sourceId ?? i}`}
+                          fixture={m}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+                      No fixtures currently reported by the connected free sources for this date.
+                    </div>
+                  )}
+                </section>
               ))}
             </div>
-            {!upcoming.length && !data.isFetching && (
-              <div className="panel mt-4 p-6 text-sm text-muted-foreground">
-                The global fixture fabric is waiting for an available public feed.
-              </div>
-            )}
           </section>
         )}
         <div className="mt-12 grid gap-3 md:grid-cols-3">
           <Signal
             icon={Database}
             title="Multi-source fixture fabric"
-            text="Primary historical data is enriched by open football datasets, live feeds and worldwide discovery."
+            text="Football-Data and OpenFootball are now supplemented by TheSportsDB and ESPN public soccer scoreboards for broader league and cup coverage."
           />
           <Signal
             icon={Sparkles}
@@ -143,7 +163,7 @@ function Home() {
 function FixtureRow({
   fixture,
 }: {
-  fixture: MatchRow & { league?: string; code?: string; sourceId?: string };
+  fixture: MatchRow & { league?: string; code?: string; season?: string; sourceId?: string };
 }) {
   const id = encodeURIComponent(
     JSON.stringify({
@@ -153,7 +173,7 @@ function FixtureRow({
       t: fixture.time ?? "",
       c: fixture.code ?? "",
       l: fixture.league ?? "",
-      s: fixture.source ?? "",
+      s: fixture.season ?? "",
       i: fixture.sourceId ?? "",
     }),
   );
@@ -170,8 +190,7 @@ function FixtureRow({
           {fixture.home} <span className="text-muted-foreground">vs</span> {fixture.away}
         </div>
         <div className="label-xs mt-1">
-          {fixture.league ?? "Worldwide Football"} · {time ? `${time} EAT` : fixture.date} ·{" "}
-          {fixture.source ?? "public"}
+          {fixture.league ?? "Worldwide Football"} · {time ? `${time} EAT` : fixture.date} · {fixture.source ?? "public"}
         </div>
       </div>
       <ArrowRight className="size-4 text-muted-foreground" />
