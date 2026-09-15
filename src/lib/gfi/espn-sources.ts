@@ -3,6 +3,7 @@ import { canonicalCompetitionName, canonicalTeamName, parseScoreCell } from "./i
 
 const BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer";
 const TIMEOUT_MS = 10_000;
+const CACHE_TTL_MS = 5 * 60_000;
 
 /**
  * ESPN public scoreboards are used as free discovery/enrichment sources.
@@ -47,6 +48,8 @@ const LEAGUES: Array<{ slug: string; name: string; code: string }> = [
   { slug: "uefa.europa", name: "UEFA Europa League", code: "UEL" },
   { slug: "uefa.europa.conf", name: "UEFA Conference League", code: "UECL" },
 ];
+
+let cache: { key: string; at: number; rows: MatchRow[] } | null = null;
 
 function withTimeout(url: string) {
   const controller = new AbortController();
@@ -118,27 +121,32 @@ function parseEvents(payload: unknown, leagueName: string, code: string): MatchR
 }
 
 export async function fetchEspnFixtures(dateFrom: string, dateTo: string): Promise<MatchRow[]> {
-  const range = `${dateFrom.replace(/-/g, "")}-${dateTo.replace(/-/g, "")}`;
-  const settled = await Promise.allSettled(
-    LEAGUES.map(async (league) => {
-      const response = await withTimeout(`${BASE}/${league.slug}/scoreboard?dates=${range}`);
-      if (!response.ok) return [] as MatchRow[];
-      return parseEvents(await response.json(), league.name, league.code);
-    }),
-  );
+  const cacheKey = `${dateFrom}|${dateTo}`;
+  if (cache && cache.key === cacheKey && Date.now() - cache.at < CACHE_TTL_MS) return cache.rows;
+
+  const out: MatchRow[] = [];
+  const chunkSize = 6;
+  for (let start = 0; start < LEAGUES.length; start += chunkSize) {
+    const batch = await Promise.allSettled(
+      LEAGUES.slice(start, start + chunkSize).map(async (league) => {
+        const dates = `${dateFrom.replace(/-/g, "")}-${dateTo.replace(/-/g, "")}`;
+        const response = await withTimeout(`${BASE}/${league.slug}/scoreboard?dates=${dates}`);
+        if (!response.ok) return [] as MatchRow[];
+        return parseEvents(await response.json(), league.name, league.code);
+      }),
+    );
+    for (const result of batch) if (result.status === "fulfilled") out.push(...result.value);
+  }
 
   const seen = new Set<string>();
-  const out: MatchRow[] = [];
-  for (const result of settled) {
-    if (result.status !== "fulfilled") continue;
-    for (const row of result.value) {
-      const id = `${row.date}|${row.home.toLowerCase()}|${row.away.toLowerCase()}|${row.sourceId}`;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      if (row.date >= dateFrom && row.date <= dateTo) out.push(row);
-    }
-  }
-  return out;
+  const deduped = out.filter((row) => {
+    const id = `${row.date}|${row.home.toLowerCase()}|${row.away.toLowerCase()}|${row.time ?? ""}|${row.source}|${row.sourceId}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return row.date >= dateFrom && row.date <= dateTo;
+  });
+  cache = { key: cacheKey, at: Date.now(), rows: deduped };
+  return deduped;
 }
 
 export const ESPN_SOURCE_CATALOG = LEAGUES.map((x) => ({
