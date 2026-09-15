@@ -26,6 +26,50 @@ function goalProbability(result: AuthoritativeMatchAnalysis, key: string) {
 function bttsProbability(result: AuthoritativeMatchAnalysis) {
   return result?.engines?.find((item) => item.id === "BTTS")?.values?.yes;
 }
+function signal(
+  market: MainstreamMarket,
+  selection: string,
+  probability: number,
+  confidence: number,
+  rationale: string,
+): MarketSignal {
+  const p = clamp(probability);
+  return {
+    market,
+    selection,
+    probability: p,
+    confidence: Math.round(confidence),
+    tier: p >= 0.62 ? "PRIMARY" : p >= 0.56 ? "SECONDARY" : "WATCH",
+    rationale,
+  };
+}
+
+/**
+ * The seven comparison markets requested by the product are deliberately kept
+ * separate from the wider market map. This allows the UI/batch layer to compare
+ * the actual mainstream alternatives instead of only showing the winning side
+ * of each market family.
+ */
+export function buildSevenMarketComparison(result: AuthoritativeMatchAnalysis): MarketSignal[] {
+  const probs = result?.probabilities ?? { home: 0.33, draw: 0.34, away: 0.33 };
+  const confidence = result?.confidence ?? 50;
+  const homeTeam = result?.home?.team ?? "Home";
+  const awayTeam = result?.away?.team ?? "Away";
+  const over15 = Number(goalProbability(result, "over1.5"));
+  const over25 = Number(goalProbability(result, "over2.5"));
+  const over35 = Number(goalProbability(result, "over3.5"));
+  const btts = Number(bttsProbability(result));
+
+  return [
+    signal("1X2", `${homeTeam} WIN`, probs.home, (confidence + pct(probs.home)) / 2, `Home-win model probability: ${pct(probs.home)}%.`),
+    signal("1X2", "DRAW", probs.draw, (confidence + pct(probs.draw)) / 2, `Draw model probability: ${pct(probs.draw)}%.`),
+    signal("1X2", `${awayTeam} WIN`, probs.away, (confidence + pct(probs.away)) / 2, `Away-win model probability: ${pct(probs.away)}%.`),
+    signal("OVER/UNDER 1.5", "OVER 1.5", over15, (confidence + pct(over15)) / 2, `Probability of at least 2 total goals: ${pct(over15)}%.`),
+    signal("OVER/UNDER 2.5", "OVER 2.5", over25, (confidence + pct(over25)) / 2, `Probability of at least 3 total goals: ${pct(over25)}%.`),
+    signal("OVER/UNDER 3.5", "UNDER 3.5", 1 - over35, (confidence + pct(1 - over35)) / 2, `Probability of at most 3 total goals: ${pct(1 - over35)}%.`),
+    signal("BTTS", "BTTS — YES", btts, (confidence + pct(btts)) / 2, `Probability both teams score: ${pct(btts)}%.`),
+  ].filter((item) => Number.isFinite(item.probability));
+}
 
 export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): MarketSignal[] {
   const probs = result?.probabilities ?? { home: 0.33, draw: 0.34, away: 0.33 };
