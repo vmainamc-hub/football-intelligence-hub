@@ -46,7 +46,6 @@ const timeoutFetch = async (url: string, init: RequestInit, ms: number) => {
 };
 
 function buildQueries(home: string, away: string, date: string) {
-  const base = `${home} ${away}`;
   return [
     `"${home}" "${away}" ${date}`,
     `"${home}" results form 2026`,
@@ -60,7 +59,6 @@ function buildQueries(home: string, away: string, date: string) {
 function extractRows(text: string, home: string, away: string): MatchRow[] {
   const rows: MatchRow[] = [];
   const lines = text.split(/(?<=[.!?])\s+|\n+/).map(s => s.trim()).filter(Boolean);
-  const teamNames = [home, away];
   const dateRe = /(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2})/;
   const scoreRe = /\b([0-9]{1,2})\s*[-–:]\s*([0-9]{1,2})\b/;
   for (const line of lines) {
@@ -92,7 +90,7 @@ export async function acquireWebEvidence(home: string, away: string, date: strin
   const allHits: SearchHit[] = [];
   for (const q of queries) {
     try {
-      const url = `${SEARCH_URL}?${new URLSearchParams({ q, count: String(MAX_HITS_PER_QUERY), country: "CZ", search_lang: "en", extra_snippets: "true", safesearch: "moderate" })}`;
+      const url = `${SEARCH_URL}?${new URLSearchParams({ q, count: String(MAX_HITS_PER_QUERY), search_lang: "en", extra_snippets: "true", safesearch: "moderate" })}`;
       const response = await timeoutFetch(url, { headers: { Accept: "application/json", "X-Subscription-Token": key } }, SEARCH_TIMEOUT_MS);
       if (!response.ok) { errors.push(`search ${response.status}`); continue; }
       const json = await response.json() as { web?: { results?: Array<{ title?: string; url?: string; description?: string; age?: string }> } };
@@ -110,8 +108,7 @@ export async function acquireWebEvidence(home: string, away: string, date: strin
 
   for (const hit of pages) {
     sources.add(hit.url); families.add(hostOf(hit.url));
-    const seed = `${hit.title}. ${hit.description ?? ""}`;
-    const textParts = [seed];
+    const textParts = [`${hit.title}. ${hit.description ?? ""}`];
     try {
       const response = await timeoutFetch(hit.url, { headers: { Accept: "text/html,text/plain;q=0.9,*/*;q=0.1", "User-Agent": "GlobalFootballIntelligence/1.0 evidence-fetch" } }, PAGE_TIMEOUT_MS);
       if (response.ok) {
@@ -127,7 +124,7 @@ export async function acquireWebEvidence(home: string, away: string, date: strin
           textParts.push(stripHtml(chunks));
         } else textParts.push(stripHtml(await response.text()).slice(0, MAX_PAGE_BYTES));
       }
-    } catch { /* search result remains usable as a bounded snippet */ }
+    } catch { /* bounded search snippets remain usable */ }
     const text = textParts.join(" ");
     const extracted = extractRows(text, home, away);
     for (const row of extracted) rows.push(row);
