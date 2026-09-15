@@ -62,9 +62,7 @@ export const analyzeFreeMatch = createServerFn({ method: "POST" })
     analysis.warnings = [
       ...new Set([
         ...analysis.warnings,
-        research.coverage < 70
-          ? `Research coverage ${research.coverage}% across ${research.distinctSources} source families.`
-          : `Research coverage ${research.coverage}% across ${research.distinctSources} source families.`,
+        `Research coverage ${research.coverage}% across ${research.distinctSources} source families.`,
       ]),
     ];
     analysis.aiReasoningPacket = {
@@ -78,5 +76,31 @@ export const analyzeFreeMatch = createServerFn({ method: "POST" })
         searchedAt: research.searchedAt,
       },
     };
+
+    // Never turn a thin-data state into a synthetic 0-0 / Under 3.5 answer.
+    // The scoring engine uses mathematical floors when observations are absent;
+    // those floors are useful internally but are not evidence and must not be
+    // presented as a forecast.
+    if (
+      analysis.decision === "INSUFFICIENT INTELLIGENCE" ||
+      analysis.home.played < 4 ||
+      analysis.away.played < 4
+    ) {
+      analysis.predictedScore = "—";
+      analysis.finalPrediction = "Insufficient intelligence";
+      analysis.predictions = [];
+      analysis.warnings = [
+        ...new Set([
+          ...analysis.warnings,
+          `Prediction suppressed because usable team history is ${analysis.home.played} home-team observations / ${analysis.away.played} away-team observations.`,
+        ]),
+      ];
+      analysis.aiReasoningPacket = {
+        ...analysis.aiReasoningPacket,
+        predictionSuppressed: true,
+        suppressionReason: "LOW_TEAM_SAMPLE",
+      };
+    }
+
     return analysis;
   });
