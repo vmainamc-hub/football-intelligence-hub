@@ -91,7 +91,7 @@ export async function loadLivingEvidence(fixture: MatchRow): Promise<LivingEvide
   const summary = match?.summary && typeof match.summary === "object" ? match.summary as Record<string, unknown> : {};
   const sourceFamilies = Array.isArray(summary.sourceFamilies) ? summary.sourceFamilies.filter((x): x is string => typeof x === "string") : [];
   const sourceFamilyCounts = summary.sourceFamilyCounts && typeof summary.sourceFamilyCounts === "object"
-    ? Object.fromEntries(Object.entries(summary.sourceFamilyCounts as Record<string, unknown>).filter(([, value]) => typeof value === "number')) as Record<string, number>
+    ? Object.fromEntries(Object.entries(summary.sourceFamilyCounts as Record<string, unknown>).filter(([, value]) => typeof value === "number")) as Record<string, number>
     : {};
   const seen = new Set<string>();
   const unique = (rows: MatchRow[]) => rows.filter((row) => {
