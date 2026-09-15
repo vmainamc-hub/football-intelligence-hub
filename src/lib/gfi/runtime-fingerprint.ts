@@ -34,6 +34,7 @@ export function assertAuthoritativeResult(result: unknown): asserts result is {
   decision: string;
   probabilities: { home: number; draw: number; away: number };
   engines: unknown[];
+  aiReasoningPacket: Record<string, unknown>;
 } {
   if (!result || typeof result !== "object") {
     throw new Error("AUTHORITATIVE_RESULT_MISSING");
@@ -47,6 +48,9 @@ export function assertAuthoritativeResult(result: unknown): asserts result is {
       (key) => typeof probabilities[key] === "number" && Number.isFinite(probabilities[key]),
     );
 
+  const packet = candidate.aiReasoningPacket as Record<string, unknown> | undefined;
+  const runtime = packet?.runtimeFingerprint as Record<string, unknown> | undefined;
+
   if (
     typeof candidate.analysisVersion !== "string" ||
     typeof candidate.finalPrediction !== "string" ||
@@ -54,7 +58,12 @@ export function assertAuthoritativeResult(result: unknown): asserts result is {
     typeof candidate.decision !== "string" ||
     !validProbabilities ||
     !Array.isArray(candidate.engines) ||
-    candidate.engines.length === 0
+    candidate.engines.length === 0 ||
+    !packet ||
+    !runtime ||
+    typeof runtime.buildSha !== "string" ||
+    typeof runtime.analysisVersion !== "string" ||
+    runtime.analysisVersion !== GFI_ANALYSIS_VERSION
   ) {
     throw new Error("AUTHORITATIVE_RESULT_INVALID");
   }
@@ -69,6 +78,10 @@ export function assertAuthoritativeResult(result: unknown): asserts result is {
     Number(probabilities.home) + Number(probabilities.draw) + Number(probabilities.away);
   if (Math.abs(total - 1) > 0.025) {
     throw new Error("AUTHORITATIVE_RESULT_PROBABILITIES_INVALID");
+  }
+
+  if (runtime.buildSha === "UNKNOWN_BUILD") {
+    throw new Error("AUTHORITATIVE_BUILD_FINGERPRINT_MISSING");
   }
 }
 
