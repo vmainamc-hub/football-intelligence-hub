@@ -21,7 +21,7 @@ export const analyzeFreeMatch = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<ServerMatchAnalysis> => {
     const [groups, research] = await Promise.all([
       loadFreeFixtures(),
-      researchFixture({ data: { query: `${data.fixture.home} vs ${data.fixture.away}` } }).catch(
+      researchFixture({ data: { query: `${data.fixture.home} vs ${data.fixture.away} ${data.fixture.date}` } }).catch(
         () => ({
           matches: [],
           reservoirMatches: 0,
@@ -44,7 +44,7 @@ export const analyzeFreeMatch = createServerFn({ method: "POST" })
       code: `RESEARCH_${data.code || "GLOBAL"}`,
       season: "research",
       matches: researchRows,
-      sourceUrl: "reservoir-plus-live-research",
+      sourceUrl: "reservoir-plus-live-public-research",
       fetchedAt: research.searchedAt,
     };
 
@@ -62,7 +62,7 @@ export const analyzeFreeMatch = createServerFn({ method: "POST" })
     analysis.warnings = [
       ...new Set([
         ...analysis.warnings,
-        `Research coverage ${research.coverage}% across ${research.distinctSources} source families.`,
+        `Public research escalation: ${research.coverage}% coverage across ${research.distinctSources} source families (${research.reservoirMatches} stored observations, ${research.liveMatches} live/public observations).`,
       ]),
     ];
     analysis.aiReasoningPacket = {
@@ -75,30 +75,24 @@ export const analyzeFreeMatch = createServerFn({ method: "POST" })
         coverage: research.coverage,
         searchedAt: research.searchedAt,
       },
+      researchPolicy: "ESCALATE_PUBLIC_SOURCES_BEFORE_TERMINAL_NO_DATA_STATE",
     };
 
-    // Never turn a thin-data state into a synthetic 0-0 / Under 3.5 answer.
-    // The scoring engine uses mathematical floors when observations are absent;
-    // those floors are useful internally but are not evidence and must not be
-    // presented as a forecast.
-    if (
-      analysis.decision === "INSUFFICIENT INTELLIGENCE" ||
-      analysis.home.played < 4 ||
-      analysis.away.played < 4
-    ) {
-      analysis.predictedScore = "—";
-      analysis.finalPrediction = "Insufficient intelligence";
-      analysis.predictions = [];
+    // Never replace a real match analysis with a synthetic 0-0 or suppress the
+    // result merely because one provider returned a thin sample. The research
+    // ladder has already widened the evidence set. The engines expose quality,
+    // conflict and risk so the user can judge the strength of the result.
+    if (analysis.home.played < 4 || analysis.away.played < 4) {
       analysis.warnings = [
         ...new Set([
           ...analysis.warnings,
-          `Prediction suppressed because usable team history is ${analysis.home.played} home-team observations / ${analysis.away.played} away-team observations.`,
+          `Research-expanded team sample remains ${analysis.home.played} home-team observations / ${analysis.away.played} away-team observations; result is marked WATCH by downstream market qualification rather than suppressed.`,
         ]),
       ];
       analysis.aiReasoningPacket = {
         ...analysis.aiReasoningPacket,
-        predictionSuppressed: true,
-        suppressionReason: "LOW_TEAM_SAMPLE",
+        researchState: "CONTINUE_PUBLIC_RESEARCH",
+        predictionSuppressed: false,
       };
     }
 
