@@ -109,17 +109,19 @@ function parseCsv(text: string): MatchRow[] {
     .slice(1)
     .map((line) => {
       const c = split(line);
-      const hg = Number((c[hgi] ?? "").trim()),
-        ag = Number((c[agi] ?? "").trim()),
-        r = (c[ri] ?? "").trim();
+      // CRITICAL: blank FTHG/FTAG cells mean the fixture has not been played.
+      // Number("") is 0, so parseScoreCell keeps them undefined and future
+      // fixtures never enter the historical model as completed 0-0 matches.
+      const home = (c[hi] ?? "").trim(),
+        away = (c[ai] ?? "").trim();
       return {
         date: (c[di] ?? "").trim(),
         time: (c[ti] ?? "").trim() || undefined,
-        home: (c[hi] ?? "").trim(),
-        away: (c[ai] ?? "").trim(),
-        hg: Number.isFinite(hg) ? hg : undefined,
-        ag: Number.isFinite(ag) ? ag : undefined,
-        result: r === "H" || r === "D" || r === "A" ? r : undefined,
+        home: canonicalTeamName(home),
+        away: canonicalTeamName(away),
+        hg: parseScoreCell(c[hgi]),
+        ag: parseScoreCell(c[agi]),
+        result: parseResultCell(c[ri]),
         source: "football-data",
       } satisfies MatchRow;
     })

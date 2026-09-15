@@ -1,6 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { ingestReservoirMatches } from "./data-reservoir";
 import type { MatchRow } from "./intelligence";
+import {
+  canonicalCompetitionName,
+  canonicalTeamName,
+  parseResultCell,
+  parseScoreCell,
+} from "./identity";
 
 const BASE_URL = "https://www.football-data.co.uk/mmz4281";
 const CODES = [
