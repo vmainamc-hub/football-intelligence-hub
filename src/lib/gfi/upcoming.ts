@@ -1,6 +1,12 @@
 import type { FreeLeague, MatchRow } from "./intelligence";
 import { kickoffKenya } from "./intelligence";
 
+export type UpcomingDay = {
+  date: string;
+  label: string;
+  matches: (MatchRow & { league: string; code: string; season: string })[];
+};
+
 function todayKenya() {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Africa/Nairobi",
@@ -8,6 +14,12 @@ function todayKenya() {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
+}
+
+function addDaysKey(key: string, days: number) {
+  const d = new Date(`${key}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 function dateKey(value: string) {
@@ -30,27 +42,66 @@ function kickoffInstant(match: MatchRow) {
   return new Date(`${finalDay}T${m[2]}:${m[3]}:00+03:00`).getTime();
 }
 
-export function getUpcomingFixtures(all: FreeLeague[], limit = 18) {
-  const now = Date.now();
-  const today = todayKenya();
-  const items = all.flatMap((group) =>
-    group.matches
-      .filter((match) => match.hg === undefined && match.ag === undefined)
-      .filter((match) => dateKey(match.date) >= today)
-      .map((match) => ({ ...match, league: group.league, code: group.code, season: group.season })),
-  );
+function kenyaCalendarDate(match: MatchRow) {
+  const kenya = kickoffKenya(match);
+  const matchDay = kenya?.match(/^(\d{4}-\d{2}-\d{2})(?:\+1)? /)?.[1];
+  if (matchDay) return matchDay;
+  return dateKey(match.date);
+}
 
-  return items
-    .filter((match) => {
+function relativeLabel(date: string, today: string) {
+  if (date === today) return "TODAY";
+  if (date === addDaysKey(today, 1)) return "TOMORROW";
+  if (date === addDaysKey(today, 2)) return "DAY AFTER TOMORROW";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Nairobi",
+    weekday: "long",
+    day: "2-digit",
+    month: "short",
+  }).format(new Date(`${date}T12:00:00+03:00`)).toUpperCase();
+}
+
+export function getUpcomingFixtures(all: FreeLeague[], limit = 18) {
+  return getUpcomingFixturesByDay(all, 1, limit).flatMap((group) => group.matches);
+}
+
+/**
+ * Never hides a later same-day fixture merely because an earlier global batch
+ * consumed the display limit. The home page uses these day buckets so marquee
+ * fixtures such as cup ties remain discoverable.
+ */
+export function getUpcomingFixturesByDay(all: FreeLeague[], days = 7, perDayLimit = 80): UpcomingDay[] {
+  const today = todayKenya();
+  const end = addDaysKey(today, Math.max(0, days - 1));
+  const now = Date.now();
+  const byDate = new Map<string, (MatchRow & { league: string; code: string; season: string })[]>();
+
+  for (const group of all) {
+    for (const match of group.matches) {
+      if (match.hg !== undefined || match.ag !== undefined) continue;
+      const calendarDate = kenyaCalendarDate(match);
+      if (calendarDate < today || calendarDate > end) continue;
       const kickoff = kickoffInstant(match);
-      if (kickoff !== undefined) return kickoff >= now - 5 * 60_000;
-      // A future fixture without a published kickoff remains visible rather than disappearing.
-      return dateKey(match.date) > today || dateKey(match.date) === today;
-    })
-    .sort((a, b) => {
-      const ak = kickoffInstant(a) ?? new Date(`${dateKey(a.date)}T23:59:00+03:00`).getTime();
-      const bk = kickoffInstant(b) ?? new Date(`${dateKey(b.date)}T23:59:00+03:00`).getTime();
-      return ak - bk;
-    })
-    .slice(0, limit);
+      if (calendarDate === today && kickoff !== undefined && kickoff < now - 5 * 60_000) continue;
+      const row = { ...match, league: group.league, code: group.code, season: group.season };
+      const list = byDate.get(calendarDate) ?? [];
+      list.push(row);
+      byDate.set(calendarDate, list);
+    }
+  }
+
+  return Array.from({ length: days }, (_, index) => addDaysKey(today, index)).map((date) => {
+    const matches = (byDate.get(date) ?? [])
+      .sort((a, b) => {
+        const ak = kickoffInstant(a) ?? new Date(`${date}T23:59:00+03:00`).getTime();
+        const bk = kickoffInstant(b) ?? new Date(`${date}T23:59:00+03:00`).getTime();
+        return ak - bk;
+      })
+      .slice(0, perDayLimit);
+    return {
+      date,
+      label: relativeLabel(date, today),
+      matches,
+    };
+  });
 }
