@@ -22,99 +22,124 @@ export const ACTIVE_ENGINE_FAMILIES = [
   "CONSENSUS",
   "SIMULATION",
 ] as const;
+
 const avg = (x: number[]) => (x.length ? x.reduce((a, b) => a + b, 0) / x.length : 0);
-function consensus(es: EngineOutput[]): EngineOutput {
-  const u = es.filter((e) => e.probabilities),
-    w = (e: EngineOutput) =>
-      Math.max(0.2, Math.min(1.8, (e.quality / 100) * (0.55 + e.confidence / 200))),
-    tw = u.reduce((s, e) => s + w(e), 0) || 1,
-    H = u.reduce((s, e) => s + e.probabilities!.home * w(e), 0) / tw,
-    D = u.reduce((s, e) => s + e.probabilities!.draw * w(e), 0) / tw,
-    A = u.reduce((s, e) => s + e.probabilities!.away * w(e), 0) / tw,
-    dis = avg(
-      u.map(
-        (e) =>
-          Math.abs(e.probabilities!.home - H) +
-          Math.abs(e.probabilities!.draw - D) +
-          Math.abs(e.probabilities!.away - A),
-      ),
-    );
+const clamp = (n: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, n));
+
+/**
+ * The advanced models are useful corroborators but several are mathematically
+ * correlated (goal rate, form, momentum, Poisson-family models). They must not
+ * receive the same effective vote as the independent core families.
+ * Simulation is downstream validation and is deliberately excluded from voting.
+ */
+function consensus(core: EngineOutput[], advanced: EngineOutput[]): EngineOutput {
+  const probabilityModels = (models: EngineOutput[]) => models.filter((e) => e.probabilities);
+  const weightedAverage = (models: EngineOutput[]) => {
+    const usable = probabilityModels(models);
+    const weight = (e: EngineOutput) =>
+      Math.max(0.2, Math.min(1.8, (e.quality / 100) * (0.55 + e.confidence / 200)));
+    const total = usable.reduce((s, e) => s + weight(e), 0) || 1;
+    return {
+      home: usable.reduce((s, e) => s + e.probabilities!.home * weight(e), 0) / total,
+      draw: usable.reduce((s, e) => s + e.probabilities!.draw * weight(e), 0) / total,
+      away: usable.reduce((s, e) => s + e.probabilities!.away * weight(e), 0) / total,
+      models: usable.length,
+    };
+  };
+  const coreAvg = weightedAverage(core);
+  const advancedAvg = weightedAverage(advanced);
+  const coreWeight = coreAvg.models ? 0.6 : 0;
+  const advancedWeight = advancedAvg.models ? 0.4 : 0;
+  const totalGroupWeight = coreWeight + advancedWeight || 1;
+  const H = (coreAvg.home * coreWeight + advancedAvg.home * advancedWeight) / totalGroupWeight;
+  const D = (coreAvg.draw * coreWeight + advancedAvg.draw * advancedWeight) / totalGroupWeight;
+  const A = (coreAvg.away * coreWeight + advancedAvg.away * advancedWeight) / totalGroupWeight;
+  const u = [...probabilityModels(core), ...probabilityModels(advanced)];
+  const dis = avg(
+    u.map((e) =>
+      0.5 *
+      (Math.abs(e.probabilities!.home - H) +
+        Math.abs(e.probabilities!.draw - D) +
+        Math.abs(e.probabilities!.away - A)),
+    ),
+  );
   return {
     id: "CONSENSUS",
     name: "Weighted Multi-Model Consensus",
-    version: "consensus-v5",
-    signal: dis < 0.18 ? "SUPPORT" : "CONTRADICTION",
+    version: "consensus-v6",
+    signal: dis < 0.12 ? "SUPPORT" : "CONTRADICTION",
     confidence: Math.round(Math.max(0, 1 - dis) * 100),
-    quality: Math.round(Math.max(50, Math.min(98, 60 + u.length * 2))),
+    quality: Math.round(Math.max(52, Math.min(97, 58 + Math.min(18, u.length * 1.4)))),
     probabilities: { home: H, draw: D, away: A },
-    values: { agreement: 1 - dis, conflict: dis, models: u.length },
+    values: { agreement: 1 - dis, conflict: dis, models: u.length, coreWeight, advancedWeight },
     evidence: [
-      `${u.length} probability engines contributed with quality/confidence weighting.`,
-      `Cross-model disagreement ${(dis * 100).toFixed(1)}%.`,
+      `${u.length} probability engines contributed using quality/confidence weighting.`,
+      `Core families carry ${Math.round(coreWeight * 100)}% of the vote; correlated advanced families carry ${Math.round(advancedWeight * 100)}%.`,
+      `Cross-model disagreement ${(dis * 100).toFixed(1)}% after normalized weighting.`,
     ],
     limitations: u.length < 5 ? ["Fewer than five probability models are available."] : [],
   };
 }
+
 export function analyzeActiveAuthoritatively(
   f: MatchRow,
   rows: MatchRow[],
 ): AuthoritativeMatchAnalysis {
-  const base = analyzeAuthoritatively(f, rows),
-    advanced = runAdvancedEngines(f, rows) as unknown as EngineOutput[],
-    core = base.engines.filter((e) => e.id !== "CONSENSUS"),
-    initial = [...core, ...advanced],
-    con = consensus(initial),
-    sim = simulationEngineOutput(
-      {
-        ...base,
-        engines: initial,
-        consensus: {
-          home: con.probabilities!.home,
-          draw: con.probabilities!.draw,
-          away: con.probabilities!.away,
-          agreement: Number(con.values.agreement),
-          conflict: Number(con.values.conflict),
-          leader: "none",
-        },
-      } as AuthoritativeMatchAnalysis,
-      10000,
-    ),
-    engines = [...initial, con, sim.engine],
-    p = con.probabilities!,
-    top = Math.max(p.home, p.draw, p.away),
-    conflict = Number(con.values.conflict),
-    quality = Math.round(
-      Math.max(20, Math.min(98, avg(initial.map((e) => e.quality)) * 0.62 + (1 - conflict) * 38)),
-    );
+  const base = analyzeAuthoritatively(f, rows);
+  const advanced = runAdvancedEngines(f, rows) as unknown as EngineOutput[];
+  const core = base.engines.filter((e) => e.id !== "CONSENSUS");
+  const initial = [...core, ...advanced];
+  const con = consensus(core, advanced);
+  const sim = simulationEngineOutput(
+    {
+      ...base,
+      engines: initial,
+      consensus: {
+        home: con.probabilities!.home,
+        draw: con.probabilities!.draw,
+        away: con.probabilities!.away,
+        agreement: Number(con.values.agreement),
+        conflict: Number(con.values.conflict),
+        leader: "none",
+      },
+    } as AuthoritativeMatchAnalysis,
+    10000,
+  );
+  const engines = [...initial, con, sim.engine];
+  const p = con.probabilities!;
+  const top = Math.max(p.home, p.draw, p.away);
+  const conflict = Number(con.values.conflict);
+  const rawQuality = avg(initial.map((e) => e.quality));
+  const quality = Math.round(Math.max(20, Math.min(98, rawQuality * 0.78 + 78 * 0.22)));
+
   let decision: AuthoritativeMatchAnalysis["decision"] = "NO STRONG EDGE";
-  if (f.hg !== undefined && f.ag !== undefined) decision = base.decision;
-  else if (quality < 38) decision = "INSUFFICIENT INTELLIGENCE";
+  const totalSample = base.home.played + base.away.played;
+  if (totalSample < 8 || quality < 38) decision = "INSUFFICIENT INTELLIGENCE";
   else if (conflict >= 0.2 && top - Math.min(p.home, p.draw, p.away) < 0.22)
     decision = "HIGH MODEL CONFLICT";
   else if (p.home === top && top >= 0.52) decision = "HOME EDGE";
   else if (p.away === top && top >= 0.52) decision = "AWAY EDGE";
   else if (p.draw === top && top >= 0.4) decision = "DRAW LEAN";
+
   const confidence = Math.round(
-      Math.max(
-        0,
-        Math.min(100, 0.4 + (1 - conflict) * 0.34 + Math.abs(top - 1 / 3) * 0.95 + quality / 500),
-      ) * 100,
+    clamp(0.42 + (1 - conflict) * 0.34 + Math.abs(top - 1 / 3) * 0.9 + quality / 500) * 100,
+  );
+  const warnings = [...new Set([...base.warnings, ...engines.flatMap((e) => e.limitations)])];
+  const ledger = [
+    ...base.evidenceLedger,
+    ...advanced.flatMap((e) =>
+      e.evidence.map((statement, i) => ({
+        id: `${e.id}-${i}`,
+        source: "DERIVED_MODEL" as const,
+        statement,
+        quality: e.quality,
+      })),
     ),
-    warnings = [...new Set([...base.warnings, ...engines.flatMap((e) => e.limitations)])],
-    ledger = [
-      ...base.evidenceLedger,
-      ...advanced.flatMap((e) =>
-        e.evidence.map((s, i) => ({
-          id: `${e.id}-${i}`,
-          source: "DERIVED_MODEL" as const,
-          statement: s,
-          quality: e.quality,
-        })),
-      ),
-    ];
+  ];
+
   return {
     ...base,
-    analysisVersion: "gfi-authoritative-v6",
+    analysisVersion: "gfi-authoritative-v6.1",
     engines,
     evidenceLedger: ledger,
     consensus: {
@@ -141,8 +166,10 @@ export function analyzeActiveAuthoritatively(
             : base.finalPrediction,
     aiReasoningPacket: {
       ...base.aiReasoningPacket,
-      analysisVersion: "gfi-authoritative-v6",
+      analysisVersion: "gfi-authoritative-v6.1",
       activeEngineFamilies: ACTIVE_ENGINE_FAMILIES,
+      aiRole: "DETERMINISTIC_MULTI_MODEL_SYNTHESIS",
+      aiStatus: "No external generative AI model is currently in the prediction decision path; the authoritative call is produced by statistical/model ensembles and rule-based synthesis.",
       simulation: sim.summary,
       evidenceLedger: ledger,
     },
