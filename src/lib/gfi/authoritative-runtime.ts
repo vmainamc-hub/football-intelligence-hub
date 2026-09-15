@@ -12,7 +12,6 @@ const avg=(x:number[])=>x.length?x.reduce((a,b)=>a+b,0)/x.length:0;
 const clamp=(n:number,lo=0,hi=1)=>Math.max(lo,Math.min(hi,n));
 const poisson=(lambda:number,k:number)=>{let p=Math.exp(-lambda);for(let i=1;i<=k;i++)p*=lambda/i;return p;};
 const oneX2=(lh:number,la:number)=>{let h=0,d=0,a=0;for(let i=0;i<=10;i++)for(let j=0;j<=10;j++){const p=poisson(lh,i)*poisson(la,j);if(i>j)h+=p;else if(i===j)d+=p;else a+=p;}const z=h+d+a||1;return{home:h/z,draw:d/z,away:a/z};};
-const norm=(s:string)=>s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");
 
 function consensus(core:EngineOutput[],advanced:EngineOutput[]):EngineOutput{
   const u=[...core,...advanced].filter(e=>e.probabilities);
@@ -37,15 +36,15 @@ function sparseRepair(base:AuthoritativeMatchAnalysis, rows:MatchRow[]):Authorit
   if(teamSample>0)return base;
   const g=globalPrior(rows), p=oneX2(g.lh,g.la);
   const engines=base.engines.map(e=>{
-    if(e.id==="FORM")return {...e,version:"form-sparse-prior-v1",probabilities:{home:p.home,draw:p.draw,away:p.away},quality:35,confidence:35,values:{...e.values,priorMatches:g.n}};
+    if(e.id==="FORM")return {...e,version:"form-sparse-prior-v1",probabilities:p,quality:35,confidence:35,values:{...e.values,priorMatches:g.n}};
     if(e.id==="GOALS")return {...e,version:"goals-global-prior-v1",values:{...e.values,lambdaHome:g.lh,lambdaAway:g.la,expectedGoals:g.total},quality:45,confidence:35};
     if(e.id==="TOTALS"){
       const over=(line:number)=>1-[...Array(Math.floor(line)+1)].reduce((s,_,k)=>s+poisson(g.total,k),0);
-      return {...e,version:"totals-global-prior-v1",values:{...e.values,expectedGoals:g.total,over0.5:over(.5),over1.5:over(1.5),over2.5:over(2.5),over3.5:over(3.5)},quality:45,confidence:35};
+      return {...e,version:"totals-global-prior-v1",values:{...e.values,expectedGoals:g.total,"over0.5":over(.5),"over1.5":over(1.5),"over2.5":over(2.5),"over3.5":over(3.5)},quality:45,confidence:35};
     }
     if(e.id==="BTTS"){
       const yes=(1-Math.exp(-g.lh))*(1-Math.exp(-g.la));
-      return {...e,version:"btts-global-prior-v1",values:{yes,no:1-yes},quality:45,confidence:35};
+      return {...e,version:"btts-global-prior-v1",values:{...e.values,yes,no:1-yes},quality:45,confidence:35};
     }
     if(e.id==="VENUE")return {...e,version:"venue-global-prior-v1",values:{...e.values,homeVenueWinRate:g.home},quality:35,confidence:35};
     if(e.id==="DATA_QUALITY")return {...e,quality:25,confidence:25,values:{...e.values,completedMatches:0,globalPriorMatches:g.n}};
@@ -80,7 +79,8 @@ export function analyzeActiveAuthoritatively(f:MatchRow,rows:MatchRow[]):Authori
   const robustness={score:robustnessScore,label:(robustnessScore>=78?"ROBUST":robustnessScore>=62?"STABLE":robustnessScore>=45?"FRAGILE":"UNSTABLE") as AuthoritativeMatchAnalysis["robustness"]["label"]};
   const ledger:AuthoritativeMatchAnalysis["evidenceLedger"]=base.evidenceLedger.concat(advanced.flatMap(e=>e.evidence.map((statement,i)=>({id:`${e.id}-${i}`,source:"DERIVED_MODEL" as const,statement,quality:e.quality}))));
   const scoreGoal=engines.find(e=>e.id==="GOALS");
-  const lh=Number(scoreGoal?.values.lambdaHome??globalPrior(rows).lh),la=Number(scoreGoal?.values.lambdaAway??globalPrior(rows).la);
+  const gp=globalPrior(rows);
+  const lh=Number(scoreGoal?.values.lambdaHome??gp.lh),la=Number(scoreGoal?.values.lambdaAway??gp.la);
   const predictedScore=(()=>{let best="1-1",bp=0;for(let h=0;h<=8;h++)for(let a=0;a<=8;a++){const q=poisson(lh,h)*poisson(la,a);if(q>bp){bp=q;best=`${h}-${a}`;}}return best;})();
   const totals=engines.find(e=>e.id==="TOTALS")?.values??{};
   const bttsE=engines.find(e=>e.id==="BTTS")?.values??{};
@@ -88,9 +88,9 @@ export function analyzeActiveAuthoritatively(f:MatchRow,rows:MatchRow[]):Authori
     {market:"HOME",label:base.home.team,probability:p.home,strength:p.home-1/3},
     {market:"DRAW",label:"Draw",probability:p.draw,strength:p.draw-1/3},
     {market:"AWAY",label:base.away.team,probability:p.away,strength:p.away-1/3},
-    {market:"OVER 1.5",label:"Over 1.5",probability:Number(totals.over1.5??0),strength:Number(totals.over1.5??0)-.5},
-    {market:"OVER 2.5",label:"Over 2.5",probability:Number(totals.over2.5??0),strength:Number(totals.over2.5??0)-.5},
-    {market:"OVER 3.5",label:"Over 3.5",probability:Number(totals.over3.5??0),strength:Number(totals.over3.5??0)-.5},
+    {market:"OVER 1.5",label:"Over 1.5",probability:Number(totals["over1.5"]??0),strength:Number(totals["over1.5"]??0)-.5},
+    {market:"OVER 2.5",label:"Over 2.5",probability:Number(totals["over2.5"]??0),strength:Number(totals["over2.5"]??0)-.5},
+    {market:"OVER 3.5",label:"Over 3.5",probability:Number(totals["over3.5"]??0),strength:Number(totals["over3.5"]??0)-.5},
     {market:"BTTS",label:"BTTS",probability:Number(bttsE.yes??0),strength:Number(bttsE.yes??0)-.5},
   ].filter(x=>Number.isFinite(x.probability)).sort((a,b)=>b.strength-a.strength).slice(0,5);
   const finalPrediction=decision==="HOME EDGE"?`${base.home.team} win`:decision==="AWAY EDGE"?`${base.away.team} win`:decision==="DRAW LEAN"?"Draw":(candidates[0]?.label??"No strong prediction");
