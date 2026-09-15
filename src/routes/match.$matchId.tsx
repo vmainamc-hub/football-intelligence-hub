@@ -49,9 +49,7 @@ function MatchIntelligence() {
   const localFixture = useMemo(
     () =>
       (query.data ?? [])
-        .flatMap((g) =>
-          g.matches.map((m) => ({ ...m, league: g.league, code: g.code, season: g.season })),
-        )
+        .flatMap((g) => g.matches.map((m) => ({ ...m, league: g.league, code: g.code, season: g.season })))
         .find(
           (m) =>
             m.home === parsed.h &&
@@ -68,12 +66,26 @@ function MatchIntelligence() {
     enabled: !localFixture && !!parsed.h && !!parsed.a,
     staleTime: 60_000,
   });
+  const directFixture = useMemo<Fixture | undefined>(() => {
+    if (!parsed.h || !parsed.a || !parsed.d) return undefined;
+    return {
+      home: parsed.h,
+      away: parsed.a,
+      date: parsed.d,
+      time: parsed.t ?? "",
+      league: "Worldwide Football",
+      code: parsed.c || "GLOBAL",
+      season: parsed.s || "unknown",
+      source: "route-fixture",
+      sourceId: parsed.i || "route",
+    };
+  }, [parsed.h, parsed.a, parsed.d, parsed.t, parsed.c, parsed.s, parsed.i]);
   const fixture = useMemo(
     () =>
       localFixture ??
-      ((remoteQuery.data ?? []).find((m) => m.date === parsed.d || !parsed.d) as
-        Fixture | undefined),
-    [localFixture, remoteQuery.data, parsed.d],
+      ((remoteQuery.data ?? []).find((m) => m.date === parsed.d || !parsed.d) as Fixture | undefined) ??
+      directFixture,
+    [localFixture, remoteQuery.data, parsed.d, directFixture],
   );
   const analysisQuery = useQuery({
     queryKey: [
@@ -87,31 +99,40 @@ function MatchIntelligence() {
       fixture?.source,
       fixture?.sourceId,
     ],
-    queryFn: () =>
-      analyzeFreeMatch({ data: { code: fixture!.code ?? "GLOBAL", fixture: fixture! } }),
+    queryFn: () => analyzeFreeMatch({ data: { code: fixture!.code ?? "GLOBAL", fixture: fixture! } }),
     enabled: !!fixture,
     staleTime: 10 * 60_000,
   });
   const result = analysisQuery.data as ServerMatchAnalysis | undefined;
-  if (query.isLoading || (!localFixture && remoteQuery.isLoading))
+  if (!fixture)
     return (
       <State
-        title="Investigating"
-        text="Resolving the fixture across the current public-source fabric…"
-      />
-    );
-  if (!fixture || !result)
-    return (
-      <State
-        title="Match unavailable"
+        title={remoteQuery.isFetching || query.isFetching ? "Resolving fixture" : "Match unavailable"}
         text={
-          analysisQuery.error instanceof Error
-            ? analysisQuery.error.message
-            : "No connected public source returned this fixture."
+          remoteQuery.isFetching || query.isFetching
+            ? "Checking the connected public-source fabric…"
+            : "The route did not contain enough fixture information to investigate this match."
         }
         back
       />
     );
+  if (analysisQuery.isLoading && !result)
+    return (
+      <State
+        title="Building intelligence"
+        text="The fixture is resolved. Historical context, research evidence and model engines are now being assembled."
+      />
+    );
+  if (analysisQuery.error && !result)
+    return (
+      <State
+        title="Analysis unavailable"
+        text={analysisQuery.error instanceof Error ? analysisQuery.error.message : "The authoritative analysis request failed."}
+        back
+      />
+    );
+  if (!result) return <State title="Analysis pending" text="Waiting for the authoritative result…" />;
+
   const marketMap = buildMainstreamMarketMap(result);
   const primary = marketMap[0];
   const reasoning = buildMatchReasoning(fixture, result);
@@ -119,6 +140,8 @@ function MatchIntelligence() {
     saveAuthoritativePrediction(result, fixture);
     setSaved(true);
   };
+  const aiStatus = String(result.aiReasoningPacket?.aiStatus ?? "Deterministic model synthesis");
+  const aiRole = String(result.aiReasoningPacket?.aiRole ?? "DETERMINISTIC_MULTI_MODEL_SYNTHESIS");
   return (
     <div className="min-h-screen">
       <header className="border-b border-border bg-background/95 px-5 py-5 lg:px-10">
@@ -132,8 +155,7 @@ function MatchIntelligence() {
           <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <div className="label-xs text-primary">
-                {fixture.league ?? "Worldwide Football"} · {fixture.code ?? "GLOBAL"} ·{" "}
-                {fixture.source ?? "public source"}
+                {fixture.league ?? "Worldwide Football"} · {fixture.code ?? "GLOBAL"} · {fixture.source ?? "public source"}
               </div>
               <h1 className="mt-1 text-3xl font-semibold">
                 {fixture.home} <span className="text-muted-foreground">vs</span> {fixture.away}
@@ -161,10 +183,7 @@ function MatchIntelligence() {
             <p className="mt-3 text-sm leading-6 text-muted-foreground">{reasoning.summary}</p>
             <div className="mt-4 grid gap-2">
               {reasoning.claims.slice(0, 4).map((c, idx) => (
-                <div
-                  key={`${c.id}-${idx}`}
-                  className="rounded border border-border px-3 py-2 text-xs"
-                >
+                <div key={`${c.id}-${idx}`} className="rounded border border-border px-3 py-2 text-xs">
                   <span className="label-xs mr-2">{c.signal}</span>
                   {c.statement}
                   <div className="mt-1 text-muted-foreground">{c.evidence}</div>
@@ -174,51 +193,70 @@ function MatchIntelligence() {
           </div>
           <div className="panel p-6">
             <div className="label-xs">SCENARIO</div>
-            <div className="mt-2 text-2xl font-semibold">
-              {result.predictedScore.replace("-", " : ")}
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Most likely scoreline from the goal/scenario layer, not certainty.
-            </p>
+            <div className="mt-2 text-2xl font-semibold">{result.predictedScore.replace("-", " : ")}</div>
+            <p className="mt-2 text-xs text-muted-foreground">Most likely scoreline from the goal/scenario layer, not certainty.</p>
             <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
               <ShieldCheck className="size-4" /> {result.robustness.label} · Risk {result.risk}
             </div>
           </div>
         </section>
+
+        <section className="mt-6 panel border-primary/20 p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="label-xs text-primary">ACTIONABLE DELIVERY</div>
+              <h2 className="mt-1 text-xl font-semibold">Best model-backed market</h2>
+            </div>
+            <span className="text-xs text-muted-foreground">The 1X2 call is still shown separately when it is not the best market.</span>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {marketMap.slice(0, 3).map((m) => (
+              <MarketCard key={m.market} market={m} />
+            ))}
+          </div>
+        </section>
+
         <section className="mt-6">
           <div className="flex items-end justify-between">
             <div>
-              <div className="label-xs text-primary">AUTHORITATIVE CALL</div>
+              <div className="label-xs text-primary">AUTHORITATIVE 1X2 CALL</div>
               <h2 className="mt-1 text-xl font-semibold">{primary.selection}</h2>
             </div>
-            <span className="text-xs text-muted-foreground">
-              {Math.round(primary.probability * 100)}% model probability
-            </span>
+            <span className="text-xs text-muted-foreground">{Math.round(primary.probability * 100)}% model probability</span>
           </div>
           <div className="mt-3 panel p-5">
             <p className="text-sm text-muted-foreground">{primary.rationale}</p>
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              <span className="rounded border border-border px-3 py-1.5">
-                Decision {result.decision}
-              </span>
-              <span className="rounded border border-border px-3 py-1.5">
-                Confidence {result.confidence}%
-              </span>
-              <span className="rounded border border-border px-3 py-1.5">
-                Quality {result.quality}
-              </span>
-              <span className="rounded border border-border px-3 py-1.5">
-                Agreement {Math.round(result.consensus.agreement * 100)}%
-              </span>
+              <span className="rounded border border-border px-3 py-1.5">Decision {result.decision}</span>
+              <span className="rounded border border-border px-3 py-1.5">Confidence {result.confidence}%</span>
+              <span className="rounded border border-border px-3 py-1.5">Quality {result.quality}</span>
+              <span className="rounded border border-border px-3 py-1.5">Agreement {Math.round(result.consensus.agreement * 100)}%</span>
             </div>
           </div>
         </section>
+
+        <section className="mt-6 grid gap-4 lg:grid-cols-2">
+          <div className="panel p-5">
+            <div className="label-xs text-primary">AI / MODEL STATUS</div>
+            <div className="mt-2 text-sm font-semibold">{aiRole}</div>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">{aiStatus}</p>
+            <p className="mt-3 text-xs text-muted-foreground">The system currently uses statistical and machine-learning-style model synthesis as the prediction authority. It does not call a separate generative AI model to invent the pick.</p>
+          </div>
+          <div className="panel p-5">
+            <div className="label-xs text-primary">EVIDENCE HEALTH</div>
+            <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+              <HealthStat label="Historical rows" value={String(result.pipeline.historicalRowsLoaded)} />
+              <HealthStat label="Home sample" value={String(result.pipeline.homeSample)} />
+              <HealthStat label="Away sample" value={String(result.pipeline.awaySample)} />
+              <HealthStat label="Evidence mode" value={result.pipeline.evidenceMode} />
+            </div>
+          </div>
+        </section>
+
         <section className="mt-6">
           <div className="label-xs text-primary">MARKET INTELLIGENCE</div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {marketMap.map((m: MarketSignal) => (
-              <MarketCard key={m.market} market={m} />
-            ))}
+            {marketMap.map((m: MarketSignal) => <MarketCard key={m.market} market={m} />)}
           </div>
         </section>
         <section className="mt-6">
@@ -227,9 +265,7 @@ function MatchIntelligence() {
             {result.engines.map((e, idx) => (
               <div key={`${e.id}-${idx}`} className="rounded border border-border p-3">
                 <div className="text-sm font-semibold">{e.name}</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {e.signal} · Q{e.quality} · {e.version}
-                </div>
+                <div className="mt-1 text-xs text-muted-foreground">{e.signal} · Q{e.quality} · {e.version}</div>
               </div>
             ))}
           </div>
@@ -265,11 +301,7 @@ function MatchIntelligence() {
 function State({ title, text, back = false }: { title: string; text: string; back?: boolean }) {
   return (
     <div className="mx-auto max-w-3xl px-5 py-16">
-      {back && (
-        <Link to="/" className="label-xs">
-          ← HOME
-        </Link>
-      )}
+      {back && <Link to="/" className="label-xs">← HOME</Link>}
       <h1 className="mt-5 text-2xl font-semibold">{title}</h1>
       <p className="mt-2 text-sm text-muted-foreground">{text}</p>
     </div>
@@ -280,9 +312,15 @@ function MarketCard({ market }: { market: MarketSignal }) {
     <div className="panel p-4">
       <div className="label-xs">{market.market}</div>
       <div className="mt-2 text-lg font-semibold">{market.selection}</div>
-      <div className="mt-1 text-xs text-muted-foreground">
-        {Math.round(market.probability * 100)}% · {market.rationale}
-      </div>
+      <div className="mt-1 text-xs text-muted-foreground">{Math.round(market.probability * 100)}% · {market.rationale}</div>
+    </div>
+  );
+}
+function HealthStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-border bg-card p-3">
+      <div className="label-xs">{label}</div>
+      <div className="mt-1 font-semibold">{value}</div>
     </div>
   );
 }
