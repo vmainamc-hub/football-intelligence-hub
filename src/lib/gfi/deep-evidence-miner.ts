@@ -117,6 +117,7 @@ function sourceFamily(source: string | undefined) {
   if (s.includes("sportsdb")) return "THESPORTSDB";
   if (s.includes("sportscore")) return "SPORTSCORE";
   if (s.includes("espn")) return "ESPN";
+  if (s.includes("betika")) return "BETIKA";
   if (s.includes("deep-miner")) return "DERIVED_INTELLIGENCE";
   return s ? s.toUpperCase() : "UNKNOWN";
 }
@@ -153,7 +154,7 @@ async function collectDeepPublicEvidence(home: string, away: string, fixtureDate
   const from = addDays(fixtureDate, -3);
   const to = addDays(fixtureDate, 3);
   const [global, universal, espn] = await Promise.all([
-    safeRows(fetchGlobalFallbackFixtures({ data: { dateFrom: addDays(fixtureDate, -3650), dateTo } })),
+    safeRows(fetchGlobalFallbackFixtures({ data: { dateFrom: addDays(fixtureDate, -365), dateTo } })),
     safeRows(searchUniversalFixtures({ data: { query: `${home} vs ${away}` } })),
     safeRows(fetchEspnFixtures(from, to)),
   ]);
