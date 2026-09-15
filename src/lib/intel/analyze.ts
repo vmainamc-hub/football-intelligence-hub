@@ -75,13 +75,30 @@ export function analyze(
     ? consensusValues.reduce((a, b) => a + b, 0) / consensusValues.length
     : 0;
 
-  const verdict = buildVerdict(
+  const rawVerdict = buildVerdict(
     outcomes,
     quality.score,
     stability.overall,
     conflicts,
     activeEngines,
   );
+
+  // Available-data principle: sparse evidence must reduce confidence, not
+  // erase the analysis. If at least one market was actually modelled, return
+  // its best available outcome and expose the evidence limitations explicitly.
+  // This prevents a thin team history from turning into an unrelated default
+  // such as Under 3.5 / 0-0. A genuinely unmodelled match still remains
+  // unavailable when there is no outcome at all.
+  const verdict =
+    outcomes.length > 0 &&
+    (rawVerdict.kind === "INSUFFICIENT_INTELLIGENCE" || rawVerdict.kind === "DATA_QUALITY_TOO_LOW")
+      ? {
+          kind: "NO_STRONG_EDGE" as const,
+          headline: "AVAILABLE-DATA ANALYSIS — WEAK EVIDENCE",
+          detail: `The engine analysed the evidence that is actually available (${activeEngines} active engines; data-quality score ${(quality.score * 100).toFixed(0)}%). No artificial default prediction is substituted. The strongest available outcome remains ${outcomes[0]!.label} at ${(outcomes[0]!.probability * 100).toFixed(1)}%.`,
+          outcome: outcomes[0],
+        }
+      : rawVerdict;
 
   const inputsHash = hashString(
     JSON.stringify({
