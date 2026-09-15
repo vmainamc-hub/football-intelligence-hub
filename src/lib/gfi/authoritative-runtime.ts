@@ -5,194 +5,96 @@ import { runAdvancedEngines } from "./advanced-engines";
 import { simulationEngineOutput } from "./simulation-engine";
 
 export const ACTIVE_ENGINE_FAMILIES = [
-  "FORM",
-  "GOALS",
-  "VENUE",
-  "TOTALS",
-  "BTTS",
-  "CONSISTENCY",
-  "H2H",
-  "DATA_QUALITY",
-  "ELO",
-  "BAYES_STRENGTH",
-  "DIXON_COLES",
-  "NEG_BINOMIAL",
-  "MOMENTUM",
-  "LOGISTIC_REGRESSION",
-  "CONSENSUS",
-  "SIMULATION",
+  "FORM","GOALS","VENUE","TOTALS","BTTS","CONSISTENCY","H2H","DATA_QUALITY",
+  "ELO","BAYES_STRENGTH","DIXON_COLES","NEG_BINOMIAL","MOMENTUM","LOGISTIC_REGRESSION","CONSENSUS","SIMULATION",
 ] as const;
+const avg=(x:number[])=>x.length?x.reduce((a,b)=>a+b,0)/x.length:0;
+const clamp=(n:number,lo=0,hi=1)=>Math.max(lo,Math.min(hi,n));
+const poisson=(lambda:number,k:number)=>{let p=Math.exp(-lambda);for(let i=1;i<=k;i++)p*=lambda/i;return p;};
+const oneX2=(lh:number,la:number)=>{let h=0,d=0,a=0;for(let i=0;i<=10;i++)for(let j=0;j<=10;j++){const p=poisson(lh,i)*poisson(la,j);if(i>j)h+=p;else if(i===j)d+=p;else a+=p;}const z=h+d+a||1;return{home:h/z,draw:d/z,away:a/z};};
+const norm=(s:string)=>s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");
 
-const avg = (x: number[]) => (x.length ? x.reduce((a, b) => a + b, 0) / x.length : 0);
-const clamp = (n: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, n));
-
-function consensus(core: EngineOutput[], advanced: EngineOutput[]): EngineOutput {
-  const probabilityModels = (models: EngineOutput[]) => models.filter((e) => e.probabilities);
-  const weightedAverage = (models: EngineOutput[]) => {
-    const usable = probabilityModels(models);
-    const weight = (e: EngineOutput) =>
-      Math.max(0.2, Math.min(1.8, (e.quality / 100) * (0.55 + e.confidence / 200)));
-    const total = usable.reduce((s, e) => s + weight(e), 0) || 1;
-    return {
-      home: usable.reduce((s, e) => s + e.probabilities!.home * weight(e), 0) / total,
-      draw: usable.reduce((s, e) => s + e.probabilities!.draw * weight(e), 0) / total,
-      away: usable.reduce((s, e) => s + e.probabilities!.away * weight(e), 0) / total,
-      models: usable.length,
-    };
-  };
-  const coreAvg = weightedAverage(core);
-  const advancedAvg = weightedAverage(advanced);
-  const coreWeight = coreAvg.models ? 0.6 : 0;
-  const advancedWeight = advancedAvg.models ? 0.4 : 0;
-  const totalGroupWeight = coreWeight + advancedWeight || 1;
-  const H = (coreAvg.home * coreWeight + advancedAvg.home * advancedWeight) / totalGroupWeight;
-  const D = (coreAvg.draw * coreWeight + advancedAvg.draw * advancedWeight) / totalGroupWeight;
-  const A = (coreAvg.away * coreWeight + advancedAvg.away * advancedWeight) / totalGroupWeight;
-  const u = [...probabilityModels(core), ...probabilityModels(advanced)];
-  const dis = avg(
-    u.map(
-      (e) =>
-        0.5 *
-        (Math.abs(e.probabilities!.home - H) +
-          Math.abs(e.probabilities!.draw - D) +
-          Math.abs(e.probabilities!.away - A)),
-    ),
-  );
-  return {
-    id: "CONSENSUS",
-    name: "Weighted Multi-Model Consensus",
-    version: "consensus-v6.1",
-    signal: dis < 0.12 ? "SUPPORT" : "CONTRADICTION",
-    confidence: Math.round(Math.max(0, 1 - dis) * 100),
-    quality: Math.round(Math.max(52, Math.min(97, 58 + Math.min(18, u.length * 1.4)))),
-    probabilities: { home: H, draw: D, away: A },
-    values: {
-      agreement: 1 - dis,
-      conflict: dis,
-      models: u.length,
-      coreWeight,
-      advancedWeight,
-    },
-    evidence: [
-      `${u.length} probability engines contributed using quality/confidence weighting.`,
-      `Core families carry ${Math.round(coreWeight * 100)}% of the vote; correlated advanced families carry ${Math.round(advancedWeight * 100)}%.`,
-      `Cross-model disagreement ${(dis * 100).toFixed(1)}% after normalized weighting.`,
-    ],
-    limitations: u.length < 5 ? ["Fewer than five probability models are available."] : [],
-  };
+function consensus(core:EngineOutput[],advanced:EngineOutput[]):EngineOutput{
+  const u=[...core,...advanced].filter(e=>e.probabilities);
+  const weight=(e:EngineOutput)=>clamp(e.quality/100,.15,1.25);
+  const total=u.reduce((s,e)=>s+weight(e),0)||1;
+  const H=u.reduce((s,e)=>s+e.probabilities!.home*weight(e),0)/total;
+  const D=u.reduce((s,e)=>s+e.probabilities!.draw*weight(e),0)/total;
+  const A=u.reduce((s,e)=>s+e.probabilities!.away*weight(e),0)/total;
+  const dis=avg(u.map(e=>0.5*(Math.abs(e.probabilities!.home-H)+Math.abs(e.probabilities!.draw-D)+Math.abs(e.probabilities!.away-A))));
+  return {id:"CONSENSUS",name:"Evidence-weighted Consensus",version:"consensus-v7",signal:dis<.12?"SUPPORT":"CONTRADICTION",confidence:Math.round(clamp(1-dis)*100),quality:Math.round(clamp(avg(u.map(e=>e.quality))/100)*100),probabilities:{home:H,draw:D,away:A},values:{agreement:1-dis,conflict:dis,models:u.length},evidence:[`${u.length} probability-producing model families contributed.`,`Weights are based on model quality only; outcome probability is not used as confidence.`,`Cross-model probability dispersion: ${(dis*100).toFixed(1)}%.`],limitations:u.length<5?["Fewer than five probability-producing engines are available."]:[]};
 }
 
-export function analyzeActiveAuthoritatively(
-  f: MatchRow,
-  rows: MatchRow[],
-): AuthoritativeMatchAnalysis {
-  const base = analyzeAuthoritatively(f, rows);
-  const advanced = runAdvancedEngines(f, rows) as unknown as EngineOutput[];
-  const core = base.engines.filter((e) => e.id !== "CONSENSUS");
-  const initial = [...core, ...advanced];
-  const con = consensus(core, advanced);
-  const sim = simulationEngineOutput(
-    {
-      ...base,
-      engines: initial,
-      consensus: {
-        home: con.probabilities!.home,
-        draw: con.probabilities!.draw,
-        away: con.probabilities!.away,
-        agreement: Number(con.values.agreement),
-        conflict: Number(con.values.conflict),
-        leader: "none",
-      },
-    } as AuthoritativeMatchAnalysis,
-    10000,
-  );
-  const engines = [...initial, con, sim.engine];
-  const p = con.probabilities!;
-  const top = Math.max(p.home, p.draw, p.away);
-  const conflict = Number(con.values.conflict);
-  const rawQuality = avg(initial.map((e) => e.quality));
-  const quality = Math.round(Math.max(20, Math.min(98, rawQuality * 0.78 + 78 * 0.22)));
-  const totalSample = base.home.played + base.away.played;
+function globalPrior(rows:MatchRow[]){
+  const z=rows.filter(x=>x.hg!==undefined&&x.ag!==undefined);
+  if(!z.length)return {home:0.44,draw:0.27,away:0.29,lh:1.35,la:1.10,total:2.45,n:0};
+  let h=0,d=0,a=0;for(const x of z){if(x.hg!>x.ag!)h++;else if(x.hg===x.ag)d++;else a++;}
+  const n=z.length||1;
+  return {home:h/n,draw:d/n,away:a/n,lh:avg(z.map(x=>x.hg!))||1.35,la:avg(z.map(x=>x.ag!))||1.10,total:avg(z.map(x=>x.hg!+x.ag!))||2.45,n:z.length};
+}
+function sparseRepair(base:AuthoritativeMatchAnalysis, rows:MatchRow[]):AuthoritativeMatchAnalysis{
+  const teamSample=base.home.played+base.away.played;
+  if(teamSample>0)return base;
+  const g=globalPrior(rows), p=oneX2(g.lh,g.la);
+  const engines=base.engines.map(e=>{
+    if(e.id==="FORM")return {...e,version:"form-sparse-prior-v1",probabilities:{home:p.home,draw:p.draw,away:p.away},quality:35,confidence:35,values:{...e.values,priorMatches:g.n}};
+    if(e.id==="GOALS")return {...e,version:"goals-global-prior-v1",values:{...e.values,lambdaHome:g.lh,lambdaAway:g.la,expectedGoals:g.total},quality:45,confidence:35};
+    if(e.id==="TOTALS"){
+      const over=(line:number)=>1-[...Array(Math.floor(line)+1)].reduce((s,_,k)=>s+poisson(g.total,k),0);
+      return {...e,version:"totals-global-prior-v1",values:{...e.values,expectedGoals:g.total,over0.5:over(.5),over1.5:over(1.5),over2.5:over(2.5),over3.5:over(3.5)},quality:45,confidence:35};
+    }
+    if(e.id==="BTTS"){
+      const yes=(1-Math.exp(-g.lh))*(1-Math.exp(-g.la));
+      return {...e,version:"btts-global-prior-v1",values:{yes,no:1-yes},quality:45,confidence:35};
+    }
+    if(e.id==="VENUE")return {...e,version:"venue-global-prior-v1",values:{...e.values,homeVenueWinRate:g.home},quality:35,confidence:35};
+    if(e.id==="DATA_QUALITY")return {...e,quality:25,confidence:25,values:{...e.values,completedMatches:0,globalPriorMatches:g.n}};
+    return e;
+  });
+  return {...base,engines,probabilities:p};
+}
 
-  // Research is expected to escalate before this point. A weak evidence state
-  // is not a terminal prediction state and must never be represented with a
-  // synthetic default outcome.
-  let decision: AuthoritativeMatchAnalysis["decision"] = "NO STRONG EDGE";
-  if (conflict >= 0.24 && top < 0.5) decision = "HIGH MODEL CONFLICT";
-  else if (p.home === top && top >= 0.5 && conflict < 0.24) decision = "HOME EDGE";
-  else if (p.away === top && top >= 0.5 && conflict < 0.24) decision = "AWAY EDGE";
-  else if (p.draw === top && top >= 0.4 && conflict < 0.24) decision = "DRAW LEAN";
-
-  const confidence = Math.round(
-    clamp(0.42 + (1 - conflict) * 0.34 + Math.abs(top - 1 / 3) * 0.9 + quality / 500) * 100,
-  );
-  const warnings = [...new Set([...base.warnings, ...engines.flatMap((e) => e.limitations)])];
-  const ledger = [
-    ...base.evidenceLedger,
-    ...advanced.flatMap((e) =>
-      e.evidence.map((statement, i) => ({
-        id: `${e.id}-${i}`,
-        source: "DERIVED_MODEL" as const,
-        statement,
-        quality: e.quality,
-      })),
-    ),
-  ];
-
-  const fallbackPrediction =
-    p.home >= p.draw && p.home >= p.away
-      ? `${base.home.team} lean`
-      : p.away >= p.draw
-        ? `${base.away.team} lean`
-        : "Draw lean";
-
-  return {
-    ...base,
-    probabilities: { home: p.home, draw: p.draw, away: p.away },
-    analysisVersion: "gfi-authoritative-v6.2",
-    engines,
-    evidenceLedger: ledger,
-    consensus: {
-      home: p.home,
-      draw: p.draw,
-      away: p.away,
-      agreement: Number(con.values.agreement),
-      conflict,
-      leader: top < 0.42 ? "none" : p.home === top ? "home" : p.draw === top ? "draw" : "away",
-    },
-    quality,
-    confidence,
-    decision,
-    verdict: decision,
-    warnings: [
-      ...warnings,
-      `Research-backed sample used by authority: ${totalSample} completed team observations across the assembled model context.`,
-    ],
-    evidence: ledger.slice(0, 16).map((e) => e.statement),
-    finalPrediction:
-      decision === "HOME EDGE"
-        ? `${base.home.team} win`
-        : decision === "AWAY EDGE"
-          ? `${base.away.team} win`
-          : decision === "DRAW LEAN"
-            ? "Draw"
-            : fallbackPrediction,
-    aiReasoningPacket: {
-      ...base.aiReasoningPacket,
-      analysisVersion: "gfi-authoritative-v6.2",
-      activeEngineFamilies: ACTIVE_ENGINE_FAMILIES,
-      aiRole: "EXPLAINABLE_MULTI_MODEL_SYNTHESIS",
-      aiStatus:
-        "The authoritative prediction is produced by a deterministic statistical ensemble with explicit evidence weighting, conflict control and simulation validation. Public research widens evidence coverage; external prediction opinions never silently override the ensemble.",
-      decisionReason:
-        decision === "HIGH MODEL CONFLICT"
-          ? "Model disagreement is materially high and no 1X2 outcome reaches the strengthened edge threshold."
-          : decision === "NO STRONG EDGE"
-            ? "No 1X2 outcome reaches the edge threshold; the market engine evaluates all mainstream markets using the assembled evidence."
-            : "A 1X2 outcome clears the authoritative probability and conflict thresholds.",
-      simulation: sim.summary,
-      evidenceLedger: ledger,
-      researchEscalation: "PUBLIC_MULTI_SOURCE_ESCALATION",
-    },
-  };
+export function analyzeActiveAuthoritatively(f:MatchRow,rows:MatchRow[]):AuthoritativeMatchAnalysis{
+  const base=sparseRepair(analyzeAuthoritatively(f,rows),rows);
+  const advanced=runAdvancedEngines(f,rows) as unknown as EngineOutput[];
+  const core=base.engines.filter(e=>e.id!=="CONSENSUS");
+  const initial=[...core,...advanced];
+  const con=consensus(core,advanced);
+  const sim=simulationEngineOutput({...base,engines:initial,consensus:{home:con.probabilities!.home,draw:con.probabilities!.draw,away:con.probabilities!.away,agreement:Number(con.values.agreement),conflict:Number(con.values.conflict),leader:"none"}} as AuthoritativeMatchAnalysis,10000);
+  const engines=[...initial,con,sim.engine];
+  const p=con.probabilities!;
+  const teamSample=base.home.played+base.away.played;
+  const teamCoverage=clamp(teamSample/30);
+  const globalCoverage=clamp(rows.filter(x=>x.hg!==undefined&&x.ag!==undefined).length/300);
+  const engineCoverage=clamp(initial.filter(e=>e.probabilities).length/14);
+  const agreement=Number(con.values.agreement);
+  const quality=Math.round(clamp(.20+.60*teamCoverage+.12*globalCoverage+.08*engineCoverage)*100);
+  const confidence=Math.round(clamp(.20+.45*teamCoverage+.15*globalCoverage+.20*agreement)*100);
+  const top=Math.max(p.home,p.draw,p.away), spread=top-Math.min(p.home,p.draw,p.away), conflict=Number(con.values.conflict);
+  let decision:AuthoritativeMatchAnalysis["decision"]="NO STRONG EDGE";
+  if(conflict>=.24&&spread<.18)decision="HIGH MODEL CONFLICT";
+  else if(teamSample>=8&&top>=.52&&conflict<.20)decision=p.home===top?"HOME EDGE":p.away===top?"AWAY EDGE":"DRAW LEAN";
+  else if(teamSample>=8&&p.draw===top&&top>=.40&&conflict<.20)decision="DRAW LEAN";
+  const risk:AuthoritativeMatchAnalysis["risk"]=confidence<40?"VERY HIGH":confidence<55?"HIGH":confidence<70?"MODERATE":"LOW";
+  const robustnessScore=Math.round(clamp(quality/100*.55+agreement*.45)*100);
+  const robustness={score:robustnessScore,label:(robustnessScore>=78?"ROBUST":robustnessScore>=62?"STABLE":robustnessScore>=45?"FRAGILE":"UNSTABLE") as AuthoritativeMatchAnalysis["robustness"]["label"]};
+  const ledger:AuthoritativeMatchAnalysis["evidenceLedger"]=base.evidenceLedger.concat(advanced.flatMap(e=>e.evidence.map((statement,i)=>({id:`${e.id}-${i}`,source:"DERIVED_MODEL" as const,statement,quality:e.quality}))));
+  const scoreGoal=engines.find(e=>e.id==="GOALS");
+  const lh=Number(scoreGoal?.values.lambdaHome??globalPrior(rows).lh),la=Number(scoreGoal?.values.lambdaAway??globalPrior(rows).la);
+  const predictedScore=(()=>{let best="1-1",bp=0;for(let h=0;h<=8;h++)for(let a=0;a<=8;a++){const q=poisson(lh,h)*poisson(la,a);if(q>bp){bp=q;best=`${h}-${a}`;}}return best;})();
+  const totals=engines.find(e=>e.id==="TOTALS")?.values??{};
+  const bttsE=engines.find(e=>e.id==="BTTS")?.values??{};
+  const candidates:AuthoritativeMatchAnalysis["predictions"]=[
+    {market:"HOME",label:base.home.team,probability:p.home,strength:p.home-1/3},
+    {market:"DRAW",label:"Draw",probability:p.draw,strength:p.draw-1/3},
+    {market:"AWAY",label:base.away.team,probability:p.away,strength:p.away-1/3},
+    {market:"OVER 1.5",label:"Over 1.5",probability:Number(totals.over1.5??0),strength:Number(totals.over1.5??0)-.5},
+    {market:"OVER 2.5",label:"Over 2.5",probability:Number(totals.over2.5??0),strength:Number(totals.over2.5??0)-.5},
+    {market:"OVER 3.5",label:"Over 3.5",probability:Number(totals.over3.5??0),strength:Number(totals.over3.5??0)-.5},
+    {market:"BTTS",label:"BTTS",probability:Number(bttsE.yes??0),strength:Number(bttsE.yes??0)-.5},
+  ].filter(x=>Number.isFinite(x.probability)).sort((a,b)=>b.strength-a.strength).slice(0,5);
+  const finalPrediction=decision==="HOME EDGE"?`${base.home.team} win`:decision==="AWAY EDGE"?`${base.away.team} win`:decision==="DRAW LEAN"?"Draw":(candidates[0]?.label??"No strong prediction");
+  const sparseWarning=teamSample===0?`No direct historical match was matched to either team in the assembled context. Probabilities therefore use an explicit global prior (${rows.filter(x=>x.hg!==undefined&&x.ag!==undefined).length} completed rows), not a low-goal fallback.`:teamSample<8?`Only ${teamSample} direct team observations were matched; probabilities are available but epistemic confidence is reduced.`:undefined;
+  const warnings=[...new Set([...base.warnings,...engines.flatMap(e=>e.limitations),sparseWarning].filter(Boolean) as string[])];
+  return {...base,analysisVersion:"gfi-authoritative-v7",engines,evidenceLedger:ledger,probabilities:p,quality,confidence,decision,verdict:decision,finalPrediction,predictedScore,predictions:candidates,warnings,consensus:{home:p.home,draw:p.draw,away:p.away,agreement,conflict,leader:top<.42?"none":p.home===top?"home":p.draw===top?"draw":"away"},robustness,risk,aiReasoningPacket:{...base.aiReasoningPacket,analysisVersion:"gfi-authoritative-v7",aiRole:"SINGLE_AUTHORITATIVE_EVIDENCE_WEIGHTED_ENGINE",confidenceDefinition:"Epistemic confidence is evidence/coverage/consensus quality; it is never equal to event probability.",teamSample,globalHistoricalRows:rows.filter(x=>x.hg!==undefined&&x.ag!==undefined).length,teamCoverage,globalCoverage,engineCoverage,quality,confidence,decision,finalPrediction,predictedScore,evidenceLedger:ledger,sparsePriorUsed:teamSample===0,activeEngineFamilies:ACTIVE_ENGINE_FAMILIES}};
 }

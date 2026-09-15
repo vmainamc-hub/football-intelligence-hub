@@ -1,4 +1,5 @@
 import type { MatchRow } from "./intelligence";
+
 export type AdvancedEngine = {
   id: string;
   name: string;
@@ -11,187 +12,69 @@ export type AdvancedEngine = {
   evidence: string[];
   limitations: string[];
 };
-const avg = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
-const clamp = (n: number, a = 0, b = 1) => Math.max(a, Math.min(b, n));
-const key = (s: string) =>
-  s
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\b(fc|afc|cf|sc|club|football)\b/g, "")
-    .replace(/[^a-z0-9]/g, "");
-const before = (f: MatchRow, r: MatchRow[]) =>
-  r
-    .filter((x) => x.hg !== undefined && x.ag !== undefined && x.date < f.date)
-    .sort((a, b) => a.date.localeCompare(b.date));
-const outcomeProbs = (edge: number) => {
-  const h = clamp(0.38 + edge * 0.09, 0.08, 0.82),
-    a = clamp(0.28 - edge * 0.06, 0.08, 0.7),
-    d = clamp(1 - h - a, 0.1, 0.46),
-    z = h + d + a;
-  return { home: h / z, draw: d / z, away: a / z };
+
+const clamp = (n: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, n));
+const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+const key = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\b(fc|afc|cf|sc|club|football|ac|cd|ud|rcd|as|us)\b/g, " ").replace(/[^a-z0-9]/g, "");
+const dated = (f: MatchRow, r: MatchRow[]) => r.filter(x => x.hg !== undefined && x.ag !== undefined && String(x.date).slice(0, 10) < String(f.date).slice(0, 10)).sort((a,b) => `${a.date}|${a.time ?? ""}`.localeCompare(`${b.date}|${b.time ?? ""}`));
+const teamRows = (team: string, r: MatchRow[]) => r.filter(x => key(x.home) === key(team) || key(x.away) === key(team));
+const poisson = (lambda: number, k: number) => { let p = Math.exp(-lambda); for (let i=1;i<=k;i++) p *= lambda/i; return p; };
+const poisson1x2 = (lh: number, la: number) => {
+  let h=0,d=0,a=0,total=0;
+  for(let i=0;i<=10;i++) for(let j=0;j<=10;j++){ const p=poisson(lh,i)*poisson(la,j); total+=p; if(i>j)h+=p; else if(i===j)d+=p; else a+=p; }
+  const z=h+d+a || total || 1; return {home:h/z,draw:d/z,away:a/z};
 };
-function elo(f: MatchRow, r: MatchRow): AdvancedEngine {
-  const m = new Map<string, number>(),
-    get = (t: string) => m.get(key(t)) ?? 1500;
-  for (const x of r) {
-    const rh = get(x.home),
-      ra = get(x.away),
-      e = 1 / (1 + 10 ** ((ra - (rh + 55)) / 400)),
-      y = x.hg! > x.ag! ? 1 : x.hg === x.ag ? 0.5 : 0,
-      d = 20 * (y - e);
-    m.set(key(x.home), rh + d);
-    m.set(key(x.away), ra - d);
-  }
-  const rh = get(f.home),
-    ra = get(f.away),
-    diff = rh - ra,
-    p = outcomeProbs(diff / 400);
-  return {
-    id: "ELO",
-    name: "Dynamic Elo",
-    version: "elo-v1",
-    signal: Math.abs(diff) >= 75 ? "SUPPORT" : "NEUTRAL",
-    confidence: Math.round(clamp(0.5 + Math.abs(diff) / 800) * 100),
-    quality: Math.round(clamp(0.45 + Math.min(1, r.length / 120) * 0.4) * 100),
-    probabilities: p,
-    values: { homeRating: rh, awayRating: ra, ratingDiff: diff },
-    evidence: [`Chronological Elo ${f.home} ${rh.toFixed(0)} vs ${f.away} ${ra.toFixed(0)}.`],
-    limitations: r.length < 20 ? ["Limited Elo calibration history."] : [],
-  };
+const nbPmf = (k:number, mean:number, variance:number) => {
+  const mu=Math.max(0.05,mean), v=Math.max(mu+0.05,variance), r=mu*mu/(v-mu), p=r/(r+mu);
+  let pmf=Math.pow(p,r); for(let i=1;i<=k;i++) pmf*=((r+i-1)/i)*(1-p); return pmf;
+};
+const nb1x2 = (mh:number,vh:number,ma:number,va:number) => {
+  let h=0,d=0,a=0;
+  for(let i=0;i<=10;i++) for(let j=0;j<=10;j++){ const p=nbPmf(i,mh,vh)*nbPmf(j,ma,va); if(i>j)h+=p; else if(i===j)d+=p; else a+=p; }
+  const z=h+d+a||1; return {home:h/z,draw:d/z,away:a/z};
+};
+const softmax = (z:number[]) => { const m=Math.max(...z), e=z.map(x=>Math.exp(Math.max(-40,Math.min(40,x-m)))); const s=e.reduce((a,b)=>a+b,0)||1; return e.map(x=>x/s); };
+
+function stats(team:string,r:MatchRow[],window=20){
+  const rows=teamRows(team,r).slice(-window); let gf=0,ga=0,pts=0,w=0,d=0;
+  for(const x of rows){ const home=key(x.home)===key(team), f=home?x.hg!:x.ag!, c=home?x.ag!:x.hg!; gf+=f;ga+=c;if(f>c){w++;pts+=3}else if(f===c){d++;pts++} }
+  return {n:rows.length,gf:rows.length?gf/rows.length:0,ga:rows.length?ga/rows.length:0,ppg:rows.length?pts/rows.length:0,winRate:rows.length?w/rows.length:0,drawRate:rows.length?d/rows.length:0};
 }
-function teamStat(t: string, r: MatchRow[]) {
-  const z = r.filter((x) => key(x.home) === key(t) || key(x.away) === key(t)).slice(-20);
-  return {
-    n: z.length,
-    gf: avg(z.map((x) => (key(x.home) === key(t) ? x.hg! : x.ag!))),
-    ga: avg(z.map((x) => (key(x.home) === key(t) ? x.ag! : x.hg!))),
-  };
+function globalMeans(r:MatchRow[]){ const z=r.filter(x=>x.hg!==undefined&&x.ag!==undefined); return {n:z.length,h:avg(z.map(x=>x.hg!))||1.35,a:avg(z.map(x=>x.ag!))||1.10,total:avg(z.map(x=>x.hg!+x.ag!))||2.45}; }
+function shrink(value:number,n:number,prior:number,priorN=20){ return (value*n+prior*priorN)/(n+priorN); }
+function quality(n:number, base:number){ return Math.round(clamp(base + Math.min(1,n/60)*0.35)*100); }
+
+function elo(f:MatchRow,r:MatchRow):AdvancedEngine{
+  const rating=new Map<string,number>(); const get=(t:string)=>rating.get(key(t))??1500;
+  for(const x of r){const rh=get(x.home),ra=get(x.away), expected=1/(1+10**(((ra-(rh+55))/400))), y=x.hg!>x.ag!?1:x.hg===x.ag?0.5:0, margin=Math.max(1,Math.abs(x.hg!-x.ag!)), k=20*(1+Math.log(margin+1)*0.25); rating.set(key(x.home),rh+k*(y-expected));rating.set(key(x.away),ra-k*(y-expected));}
+  const rh=get(f.home),ra=get(f.away), diff=rh-ra, p=poisson1x2(1.42*Math.exp(diff/1200),1.08*Math.exp(-diff/1200));
+  const q=quality(r.length,0.45); return {id:"ELO",name:"Dynamic Elo",version:"elo-v2",signal:Math.abs(diff)>=70?"SUPPORT":"NEUTRAL",confidence:Math.round(clamp(0.45+Math.min(.35,Math.abs(diff)/700))*100),quality:q,probabilities:p,values:{homeRating:rh,awayRating:ra,ratingDiff:diff},evidence:[`Chronological Elo: ${rh.toFixed(0)} vs ${ra.toFixed(0)}; home advantage is explicit.`],limitations:r.length<20?["Elo history is limited."]:[]};
 }
-function bayes(f: MatchRow, r: MatchRow[]): AdvancedEngine {
-  const h = teamStat(f.home, r),
-    a = teamStat(f.away, r),
-    edge = h.gf - h.ga - (a.gf - a.ga),
-    p = outcomeProbs(edge);
-  return {
-    id: "BAYES_STRENGTH",
-    name: "Bayesian Shrunk Strength",
-    version: "bayes-v1",
-    signal: Math.abs(edge) > 0.25 ? "SUPPORT" : "NEUTRAL",
-    confidence: Math.round(clamp(0.46 + Math.abs(edge) / 2.5) * 100),
-    quality: Math.round(clamp(0.45 + Math.min(1, (h.n + a.n) / 40) / 2) * 100),
-    probabilities: p,
-    values: {
-      homeAttack: h.gf,
-      homeDefence: h.ga,
-      awayAttack: a.gf,
-      awayDefence: a.ga,
-      strengthEdge: edge,
-    },
-    evidence: [`Team attack/defence rates are shrunk toward observed baselines.`],
-    limitations: h.n + a.n < 8 ? ["Limited team sample."] : [],
-  };
+function bayes(f:MatchRow,r:MatchRow[]):AdvancedEngine{
+  const g=globalMeans(r),h=stats(f.home,r),a=stats(f.away,r);
+  const hAttack=shrink(h.gf,h.n,g.h),hDef=shrink(h.ga,h.n,g.a),aAttack=shrink(a.gf,a.n,g.a),aDef=shrink(a.ga,a.n,g.h);
+  const lh=clamp((hAttack*0.62+aDef*0.38),0.35,3.8),la=clamp((aAttack*0.62+hDef*0.38),0.30,3.6),p=poisson1x2(lh,la); const n=h.n+a.n,q=quality(n,0.42);
+  return {id:"BAYES_STRENGTH",name:"Bayesian Shrunk Strength",version:"bayes-v2",signal:Math.abs(lh-la)>.25?"SUPPORT":"NEUTRAL",confidence:Math.round(clamp(.42+Math.abs(lh-la)/3+.25*Math.min(1,n/30))*100),quality:q,probabilities:p,values:{lambdaHome:lh,lambdaAway:la,homeAttack:hAttack,homeDefence:hDef,awayAttack:aAttack,awayDefence:aDef,priorGoalHome:g.h,priorGoalAway:g.a},evidence:[`Gamma-Poisson style shrinkage uses ${h.n} ${f.home} and ${a.n} ${f.away} observations toward the global scoring prior.`],limitations:n<10?["Team samples are small; posterior remains strongly shrunk toward the prior."]:[]};
 }
-function dixon(f: MatchRow, r: MatchRow[]): AdvancedEngine {
-  const z = r.slice(-80),
-    h = z.filter((x) => key(x.home) === key(f.home)),
-    a = z.filter((x) => key(x.away) === key(f.away)),
-    lh = clamp(
-      (avg(h.map((x) => x.hg!)) || 1.2) * 0.65 + (avg(h.map((x) => x.ag!)) || 1.1) * 0.35,
-      0.15,
-      3.8,
-    ),
-    la = clamp(
-      (avg(a.map((x) => x.ag!)) || 1) * 0.65 + (avg(a.map((x) => x.hg!)) || 1.2) * 0.35,
-      0.12,
-      3.4,
-    ),
-    p = outcomeProbs(lh - la);
-  return {
-    id: "DIXON_COLES",
-    name: "Dixon-Coles",
-    version: "dixon-coles-v1",
-    signal: Math.abs(lh - la) > 0.22 ? "SUPPORT" : "NEUTRAL",
-    confidence: Math.round(clamp(0.47 + Math.abs(lh - la) / 2.4) * 100),
-    quality: Math.round(clamp(0.5 + z.length / 160) * 100),
-    probabilities: p,
-    values: { lambdaHome: lh, lambdaAway: la, rho: 0.08 },
-    evidence: [`Low-score dependence correction applied to ${z.length} observations.`],
-    limitations: z.length < 20 ? ["Limited sample."] : [],
-  };
+function dixon(f:MatchRow,r:MatchRow[]):AdvancedEngine{
+  const g=globalMeans(r), h=stats(f.home,r,30),a=stats(f.away,r,30), lh=clamp((shrink(h.gf,h.n,g.h)*.65+shrink(a.ga,a.n,g.a)*.35),.35,3.7), la=clamp((shrink(a.gf,a.n,g.a)*.65+shrink(h.ga,h.n,g.h)*.35),.3,3.5), rho=-0.08;
+  let H=0,D=0,A=0; for(let i=0;i<=8;i++)for(let j=0;j<=8;j++){let p=poisson(lh,i)*poisson(la,j); if(i===0&&j===0)p*=1-lh*la*rho; else if(i===0&&j===1)p*=1+lh*rho; else if(i===1&&j===0)p*=1+la*rho; else if(i===1&&j===1)p*=1-rho; if(i>j)H+=p;else if(i===j)D+=p;else A+=p;}
+  const z=H+D+A||1,n=h.n+a.n,q=quality(n,0.43); return {id:"DIXON_COLES",name:"Dixon-Coles",version:"dixon-coles-v2",signal:Math.abs(lh-la)>.25?"SUPPORT":"NEUTRAL",confidence:Math.round(clamp(.43+Math.abs(lh-la)/3+.2*Math.min(1,n/30))*100),quality:q,probabilities:{home:H/z,draw:D/z,away:A/z},values:{lambdaHome:lh,lambdaAway:la,rho},evidence:[`Poisson low-score cells receive the Dixon-Coles dependence correction (rho ${rho.toFixed(2)}).`],limitations:n<12?["Dixon-Coles team-specific sample is limited; shrinkage is active."]:[]};
 }
-function negbin(f: MatchRow, r: MatchRow[]): AdvancedEngine {
-  const h = r.filter((x) => key(x.home) === key(f.home)),
-    a = r.filter((x) => key(x.away) === key(f.away)),
-    mh = avg(h.map((x) => x.hg!)) || 1.2,
-    ma = avg(a.map((x) => x.ag!)) || 1,
-    vh = Math.max(mh + 0.1, avg(h.map((x) => (x.hg! - mh) ** 2)) || mh * 1.4),
-    va = Math.max(ma + 0.1, avg(a.map((x) => (x.ag! - ma) ** 2)) || ma * 1.4),
-    p = outcomeProbs(mh - ma);
-  return {
-    id: "NEG_BINOMIAL",
-    name: "Negative Binomial",
-    version: "nb-v1",
-    signal: Math.abs(p.home - p.away) > 0.12 ? "SUPPORT" : "NEUTRAL",
-    confidence: Math.round(clamp(0.46 + Math.abs(p.home - p.away)) * 100),
-    quality: Math.round(clamp(0.44 + Math.min(1, r.length / 120) * 0.42) * 100),
-    probabilities: p,
-    values: { meanHome: mh, meanAway: ma, varHome: vh, varAway: va },
-    evidence: [`Empirical goal variance is used to model over-dispersion.`],
-    limitations: r.length < 20 ? ["Small variance sample."] : [],
-  };
+function negbin(f:MatchRow,r:MatchRow[]):AdvancedEngine{
+  const g=globalMeans(r),hRows=teamRows(f.home,r).slice(-30),aRows=teamRows(f.away,r).slice(-30), hg=hRows.map(x=>key(x.home)===key(f.home)?x.hg!:x.ag!), ag=aRows.map(x=>key(x.home)===key(f.away)?x.hg!:x.ag!);
+  const mh=shrink(avg(hg),hg.length,g.h),ma=shrink(avg(ag),ag.length,g.a),vh=Math.max(mh+.15,avg(hg.map(x=>(x-mh)**2))||mh*1.35),va=Math.max(ma+.15,avg(ag.map(x=>(x-ma)**2))||ma*1.35),p=nb1x2(mh,vh,ma,va),n=hg.length+ag.length,q=quality(n,0.4);
+  return {id:"NEG_BINOMIAL",name:"Negative Binomial",version:"negative-binomial-v2",signal:Math.abs(p.home-p.away)>.12?"SUPPORT":"NEUTRAL",confidence:Math.round(clamp(.42+Math.abs(p.home-p.away)+.2*Math.min(1,n/40))*100),quality:q,probabilities:p,values:{meanHome:mh,meanAway:ma,varHome:vh,varAway:va,dispersionHome:vh/mh,dispersionAway:va/ma},evidence:[`Negative-binomial goal counts use empirical variance rather than a Poisson variance=mean assumption.`],limitations:n<12?["Dispersion estimates are noisy with a small sample."]:[]};
 }
-function momentum(f: MatchRow, r: MatchRow[]): AdvancedEngine {
-  const s = (t: string) => {
-    const z = r.filter((x) => key(x.home) === key(t) || key(x.away) === key(t)).slice(-10);
-    return avg(
-      z.map((x, i) => {
-        const h = key(x.home) === key(t),
-          gd = h ? x.hg! - x.ag! : x.ag! - x.hg!;
-        return gd * (1 + i / Math.max(1, z.length - 1));
-      }),
-    );
-  };
-  const h = s(f.home),
-    a = s(f.away),
-    p = outcomeProbs(h - a);
-  return {
-    id: "MOMENTUM",
-    name: "Form / Momentum",
-    version: "momentum-v1",
-    signal: Math.abs(h - a) >= 0.5 ? "SUPPORT" : "NEUTRAL",
-    confidence: Math.round(clamp(0.45 + Math.abs(h - a) / 3) * 100),
-    quality: Math.round(clamp(0.44 + Math.min(1, r.length / 100) * 0.42) * 100),
-    probabilities: p,
-    values: { homeMomentum: h, awayMomentum: a, momentumEdge: h - a },
-    evidence: [`Weighted recent trajectory ${h.toFixed(2)} home vs ${a.toFixed(2)} away.`],
-    limitations: [],
-  };
+function momentum(f:MatchRow,r:MatchRow[]):AdvancedEngine{
+  const score=(team:string)=>teamRows(team,r).slice(-10).reduce((s,x,i,arr)=>{const home=key(x.home)===key(team),gd=home?x.hg!-x.ag!:x.ag!-x.hg!,w=.5+i/(2*Math.max(1,arr.length-1));return s+gd*w},0);
+  const h=score(f.home),a=score(f.away), p=poisson1x2(1.4*Math.exp((h-a)/500),1.08*Math.exp((a-h)/500)),n=teamRows(f.home,r).length+teamRows(f.away,r).length,q=quality(n,0.4);
+  return {id:"MOMENTUM",name:"Recent Momentum",version:"momentum-v2",signal:Math.abs(h-a)>.6?"SUPPORT":"NEUTRAL",confidence:Math.round(clamp(.4+Math.abs(h-a)/5+.25*Math.min(1,n/30))*100),quality:q,probabilities:p,values:{homeMomentum:h,awayMomentum:a,momentumEdge:h-a},evidence:[`Weighted recent goal-difference trajectory: ${h.toFixed(2)} vs ${a.toFixed(2)}.`],limitations:n<10?["Momentum window is short."]:[]};
 }
-function logit(f: MatchRow, r: MatchRow[]): AdvancedEngine {
-  const h = teamStat(f.home, r),
-    a = teamStat(f.away, r),
-    edge = h.gf - a.gf + (h.gf - h.ga - a.gf + a.ga) * 0.5,
-    p = outcomeProbs(edge);
-  return {
-    id: "LOGISTIC_REGRESSION",
-    name: "Chronological Logistic Model",
-    version: "logit-v1",
-    signal:
-      Math.max(p.home, p.draw, p.away) - Math.min(p.home, p.draw, p.away) > 0.14
-        ? "SUPPORT"
-        : "NEUTRAL",
-    confidence: Math.round(clamp(0.44 + Math.max(p.home, p.draw, p.away) - 1 / 3) * 100),
-    quality: Math.round(clamp(0.4 + Math.min(1, r.length / 120) * 0.45) * 100),
-    probabilities: p,
-    values: { trainingMatches: r.length, featureCount: 4 },
-    evidence: [
-      `Chronological classifier uses recent scoring, goal-difference and coverage features.`,
-    ],
-    limitations: r.length < 40 ? ["Limited chronological training history."] : [],
-  };
+function logistic(f:MatchRow,r:MatchRow[]):AdvancedEngine{
+  const teams=new Set(r.flatMap(x=>[key(x.home),key(x.away)])); const ids=[...teams]; const idx=new Map(ids.map((x,i)=>[x,i])); const w=Array.from({length:9},()=>0); const features=(home:string,away:string,history:MatchRow[])=>{const hs=stats(home,history,12),as=stats(away,history,12);return [1,hs.ppg-as.ppg,hs.gf-as.gf,hs.ga-as.ga,hs.winRate-as.winRate,1]};
+  const hist=r.slice(); for(let epoch=0;epoch<80;epoch++){const grad=Array(9).fill(0); let n=0; for(const x of hist){const beforeRows=hist.filter(y=>`${y.date}|${y.time??""}`<`${x.date}|${x.time??""}`); if(beforeRows.length<6)continue; const z=features(x.home,x.away,beforeRows);const logits=[w[0]+w[1]*z[1]+w[2]*z[2],w[3]+w[4]*z[3]+w[5]*z[4],w[6]+w[7]*z[1]+w[8]*z[4]];const p=softmax(logits),y=x.hg!>x.ag!?0:x.hg===x.ag?1:2;for(let k=0;k<3;k++){const e=p[k]-(k===y?1:0);grad[k*3]+=e;grad[k*3+1]+=e*z[1];grad[k*3+2]+=e*z[4];}n++; if(n>180)break;} for(let i=0;i<9;i++)w[i]-=.015*grad[i]/Math.max(1,n); }
+  const z=features(f.home,f.away,r),p=softmax([w[0]+w[1]*z[1]+w[2]*z[2],w[3]+w[4]*z[3]+w[5]*z[4],w[6]+w[7]*z[1]+w[8]*z[4]]),n=r.length,q=quality(n,0.38); return {id:"LOGISTIC_REGRESSION",name:"Chronological Multinomial Logistic",version:"logit-v2",signal:Math.max(...p)-Math.min(...p)>.14?"SUPPORT":"NEUTRAL",confidence:Math.round(clamp(.38+(Math.max(...p)-Math.min(...p))+.25*Math.min(1,n/120))*100),quality:q,probabilities:{home:p[0],draw:p[1],away:p[2]},values:{trainingMatches:n,featureCount:4,lossFreeTraining:true},evidence:[`Three-class softmax coefficients are fitted chronologically on pre-match team features; no post-match result is used as a feature.`],limitations:n<30?["Logistic training set is small."]:[]};
 }
-export function runAdvancedEngines(f: MatchRow, r: MatchRow[]): AdvancedEngine[] {
-  const z = before(f, r);
-  return [elo(f, z), bayes(f, z), dixon(f, z), negbin(f, z), momentum(f, z), logit(f, z)];
-}
+
+export function runAdvancedEngines(f:MatchRow,r:MatchRow[]):AdvancedEngine[]{ const z=dated(f,r); return [elo(f,z),bayes(f,z),dixon(f,z),negbin(f,z),momentum(f,z),logistic(f,z)]; }

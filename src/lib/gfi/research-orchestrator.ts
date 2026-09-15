@@ -1,127 +1,15 @@
 import { createServerFn } from "@tanstack/react-start";
-import { searchReservoir, reservoirHistoricalContext, type ReservoirMatch } from "./data-reservoir";
+import { reservoirHistoricalContext, type ReservoirMatch } from "./data-reservoir";
 import { searchUniversalFixtures } from "./universal-sources";
 import { fetchEspnFixtures } from "./espn-sources";
 import type { MatchRow } from "./intelligence";
-
-export type ResearchResult = {
-  query: string;
-  matches: MatchRow[];
-  reservoirMatches: number;
-  liveMatches: number;
-  distinctSources: number;
-  sources: string[];
-  coverage: number;
-  searchedAt: string;
-};
-
-function identity(row: MatchRow) {
-  return `${row.date}|${row.home.toLowerCase()}|${row.away.toLowerCase()}|${row.time ?? ""}|${row.hg ?? ""}|${row.ag ?? ""}`;
-}
-
-function toMatch(row: ReservoirMatch): MatchRow {
-  return {
-    date: row.date,
-    time: row.time,
-    home: row.home,
-    away: row.away,
-    hg: row.hg,
-    ag: row.ag,
-    result: row.result,
-    league: row.league,
-    code: row.code,
-    source: row.source,
-    sourceId: row.reservoirId,
-  };
-}
-
-function addDays(value: string, days: number) {
-  const d = new Date(`${value}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function dateFromQuery(query: string) {
-  const found = query.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
-  return found?.[1];
-}
-
-export const researchFixture = createServerFn({ method: "GET" })
-  .validator((input: { query: string }) => input)
-  .handler(async ({ data }): Promise<ResearchResult> => {
-    const query = data.query.trim();
-    if (!query)
-      return {
-        query,
-        matches: [],
-        reservoirMatches: 0,
-        liveMatches: 0,
-        distinctSources: 0,
-        sources: [],
-        coverage: 0,
-        searchedAt: new Date().toISOString(),
-      };
-
-    const [homeRaw = "", awayRaw = ""] = query.split(/\s+(?:vs?|v|versus)\s+/i);
-    const fixtureDate = dateFromQuery(query);
-    const from = fixtureDate ? addDays(fixtureDate, -3) : new Date().toISOString().slice(0, 10);
-    const to = fixtureDate ? addDays(fixtureDate, 3) : addDays(from, 3);
-
-    // Escalation ladder: stored reservoir -> universal public discovery -> ESPN
-    // public scoreboard. Research widens evidence; it never silently overrides
-    // the deterministic authority with another provider's prediction.
-    const [stored, live, espn] = await Promise.all([
-      reservoirHistoricalContext(homeRaw, awayRaw, 500).catch(() => []),
-      searchUniversalFixtures({ data: { query } }).catch(() => []),
-      fetchEspnFixtures(from, to).catch(() => []),
-    ]);
-
-    const merged = new Map<string, MatchRow>();
-    for (const row of stored) merged.set(identity(row), toMatch(row));
-    for (const row of live) merged.set(identity(row), row);
-
-    const homeKey = homeRaw.trim().toLowerCase();
-    const awayKey = awayRaw.trim().toLowerCase();
-    for (const row of espn) {
-      const text = `${row.home} ${row.away}`.toLowerCase();
-      const homeMatch = !homeKey || text.includes(homeKey);
-      const awayMatch = !awayKey || text.includes(awayKey);
-      if ((homeKey && awayKey && homeMatch && awayMatch) || (!homeKey && !awayKey)) {
-        merged.set(identity(row), row);
-      }
-    }
-
-    const matches = [...merged.values()].sort((a, b) =>
-      `${a.date}|${a.time ?? ""}`.localeCompare(`${b.date}|${b.time ?? ""}`),
-    );
-    const sources = [...new Set(matches.map((row) => row.source ?? "unknown"))];
-    const historyCount = matches.filter((row) => row.hg !== undefined && row.ag !== undefined).length;
-    const hasFixtureEvidence = matches.some((row) =>
-      fixtureDate ? row.date === fixtureDate : row.hg === undefined || row.ag === undefined,
-    );
-    const hasMultipleSources = sources.length >= 2;
-    const coverage = Math.min(
-      100,
-      Math.round(
-        Number(historyCount > 0) * 25 +
-          Math.min(35, historyCount) +
-          Number(hasFixtureEvidence) * 20 +
-          Number(hasMultipleSources) * 20,
-      ),
-    );
-
-    return {
-      query,
-      matches,
-      reservoirMatches: stored.length,
-      liveMatches: live.length + espn.length,
-      distinctSources: sources.length,
-      sources,
-      coverage,
-      searchedAt: new Date().toISOString(),
-    };
-  });
-
-export async function researchTeamOrFixture(query: string) {
-  return researchFixture({ data: { query } });
-}
+export type ResearchResult={query:string;matches:MatchRow[];reservoirMatches:number;liveMatches:number;distinctSources:number;sources:string[];coverage:number;searchedAt:string};
+const identity=(r:MatchRow)=>`${r.date}|${r.home.toLowerCase()}|${r.away.toLowerCase()}|${r.time??""}|${r.hg??""}|${r.ag??""}`;
+const toMatch=(r:ReservoirMatch):MatchRow=>({date:r.date,time:r.time,home:r.home,away:r.away,hg:r.hg,ag:r.ag,result:r.result,league:r.league,code:r.code,source:r.source,sourceId:r.reservoirId});
+const addDays=(v:string,n:number)=>{const d=new Date(`${v}T12:00:00Z`);d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)};
+const dateFromQuery=(q:string)=>q.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1];
+const stripDate=(q:string)=>q.replace(/\b20\d{2}-\d{2}-\d{2}\b/g," ").replace(/\s+/g," ").trim();
+const parseTeams=(q:string)=>{const clean=stripDate(q),m=clean.match(/^(.+?)\s+(?:vs\.?|v\.?|versus|against)\s+(.+)$/i);return m?{home:m[1].trim(),away:m[2].trim()}:{home:clean,away:""}};
+const norm=(v:string)=>v.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");
+export const researchFixture=createServerFn({method:"GET"}).validator((input:{query:string})=>input).handler(async({data}):Promise<ResearchResult>=>{const query=data.query.trim(),searchedAt=new Date().toISOString();if(!query)return{query,matches:[],reservoirMatches:0,liveMatches:0,distinctSources:0,sources:[],coverage:0,searchedAt};const {home,away}=parseTeams(query),fixtureDate=dateFromQuery(query),today=new Date().toISOString().slice(0,10),from=fixtureDate?addDays(fixtureDate,-3):addDays(today,-3),to=fixtureDate?addDays(fixtureDate,3):addDays(today,3);const [stored,live,espn]=await Promise.all([reservoirHistoricalContext(home,away,500).catch(()=>[] as ReservoirMatch[]),searchUniversalFixtures({data:{query:stripDate(query)}}).catch(()=>[] as MatchRow[]),fetchEspnFixtures(from,to).catch(()=>[] as MatchRow[])]);const merged=new Map<string,MatchRow>();for(const r of stored){const m=toMatch(r);merged.set(identity(m),m)}for(const r of live)merged.set(identity(r),r);const hk=norm(home),ak=norm(away);let matchedEspn=0;for(const r of espn){const rh=norm(r.home),ra=norm(r.away),exact=hk&&ak&&((rh.includes(hk)||hk.includes(rh))&&(ra.includes(ak)||ak.includes(ra))),reverse=hk&&ak&&((rh.includes(ak)||ak.includes(rh))&&(ra.includes(hk)||hk.includes(ra)));if(exact||reverse){matchedEspn++;merged.set(identity(r),r)}}const matches=[...merged.values()].sort((a,b)=>`${a.date}|${a.time??""}`.localeCompare(`${b.date}|${b.time??""}`)),sources=[...new Set(matches.map(r=>r.source??"unknown"))],history=matches.filter(r=>r.hg!==undefined&&r.ag!==undefined).length,fixtureEvidence=matches.some(r=>fixtureDate?r.date===fixtureDate:r.hg===undefined||r.ag===undefined),coverage=Math.min(100,Math.round(Math.min(50,history*2)+(fixtureEvidence?20:0)+(sources.length>=2?20:0)+(history>10?10:0)));return{query,matches,reservoirMatches:stored.length,liveMatches:live.length+matchedEspn,distinctSources:sources.length,sources,coverage,searchedAt}});
+export async function researchTeamOrFixture(query:string){return researchFixture({data:{query}})}
