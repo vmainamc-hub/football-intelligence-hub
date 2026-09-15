@@ -24,31 +24,51 @@ function decodeFixture(value: string) {
 function MatchIntelligence() {
   const { matchId } = Route.useParams();
   const navigate = useNavigate();
-  const parsed = decodeFixture(matchId);
+  const parsed = useMemo(() => decodeFixture(matchId), [matchId]);
   const [saved, setSaved] = useState(false);
-  const query = useQuery({ queryKey: ["free-fixtures", "match-intelligence"], queryFn: loadFreeFixtures, staleTime: 5 * 60_000, refetchInterval: 5 * 60_000 });
-  const localFixture = useMemo(() => (query.data ?? [])
-    .flatMap((g) => g.matches.map((m) => ({ ...m, league: g.league, code: g.code, season: g.season })))
-    .find((m) => m.home === parsed.h && m.away === parsed.a && m.date === parsed.d && (!parsed.c || m.code === parsed.c) && (!parsed.i || m.sourceId === parsed.i)) as Fixture | undefined,
-    [query.data, parsed.h, parsed.a, parsed.d, parsed.c, parsed.i]);
-  const remoteQuery = useQuery({ queryKey: ["universal-match", parsed.h, parsed.a, parsed.d], queryFn: () => searchUniversalFixtures({ data: { query: `${parsed.h} vs ${parsed.a}` } }), enabled: !localFixture && !!parsed.h && !!parsed.a, staleTime: 60_000 });
-  const directFixture = useMemo<Fixture | undefined>(() => {
+
+  // The route already carries the fixture, so analysis starts immediately and is
+  // never blocked on the full fixture catalogue. The catalogue is only used to
+  // enrich labels, and the analysis query key stays tied to the route so a later
+  // catalogue load can never silently replace an already-delivered result.
+  const fixture = useMemo<Fixture | undefined>(() => {
     if (!parsed.h || !parsed.a || !parsed.d) return undefined;
-    return { home: parsed.h, away: parsed.a, date: parsed.d, time: parsed.t ?? "", league: "Worldwide Football", code: parsed.c || "GLOBAL", season: parsed.s || "unknown", source: "route-fixture", sourceId: parsed.i || "route" };
-  }, [parsed.h, parsed.a, parsed.d, parsed.t, parsed.c, parsed.s, parsed.i]);
-  const fixture = useMemo(() => localFixture ?? ((remoteQuery.data ?? []).find((m) => m.date === parsed.d || !parsed.d) as Fixture | undefined) ?? directFixture,
-    [localFixture, remoteQuery.data, parsed.d, directFixture]);
+    return {
+      home: parsed.h,
+      away: parsed.a,
+      date: parsed.d,
+      time: parsed.t ?? "",
+      league: "Worldwide Football",
+      code: parsed.c || "GLOBAL",
+      season: parsed.s || "unknown",
+      source: "route-fixture",
+      sourceId: parsed.i || "route",
+    };
+  }, [parsed]);
+
   const analysisQuery = useQuery({
-    queryKey: ["authoritative-match", fixture?.code, fixture?.season, fixture?.home, fixture?.away, fixture?.date, fixture?.time, fixture?.source, fixture?.sourceId],
+    queryKey: ["authoritative-match", matchId],
     queryFn: () => analyzeFreeMatch({ data: { code: fixture!.code ?? "GLOBAL", fixture: fixture! } }),
     enabled: !!fixture,
     staleTime: 10 * 60_000,
   });
   const result = analysisQuery.data as ServerMatchAnalysis | undefined;
-  if (!fixture) return <State title={remoteQuery.isFetching || query.isFetching ? "Resolving fixture" : "Match unavailable"} text={remoteQuery.isFetching || query.isFetching ? "Checking the connected public-source fabric…" : "The route did not contain enough fixture information to investigate this match."} back />;
-  if (analysisQuery.isLoading && !result) return <State title="Building intelligence" text="The fixture is resolved. Historical context, research evidence and model engines are now being assembled." />;
+  const phase = !fixture
+    ? "RESOLVING FIXTURE"
+    : result
+      ? "ANALYSIS READY"
+      : "BUILDING INTELLIGENCE";
+
+  if (!fixture)
+    return <State title="Match unavailable" text="The link did not carry enough fixture information to investigate this match." back />;
   if (analysisQuery.error && !result) return <State title="Analysis unavailable" text={analysisQuery.error instanceof Error ? analysisQuery.error.message : "The authoritative analysis request failed."} back />;
-  if (!result) return <State title="Analysis pending" text="Waiting for the authoritative result…" />;
+  if (!result)
+    return (
+      <State
+        title="Building intelligence"
+        text={`${fixture.home} vs ${fixture.away} is resolved. RESOLVING FIXTURE ✓ → BUILDING INTELLIGENCE … historical context, research evidence, model engines and simulation are being assembled on the server.`}
+      />
+    );
 
   const marketMap = buildMainstreamMarketMap(result);
   const oneX2 = marketMap.find((m) => m.market === "1X2") ?? marketMap[0];
