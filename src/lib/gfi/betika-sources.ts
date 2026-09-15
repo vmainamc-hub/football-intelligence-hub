@@ -81,6 +81,19 @@ function cleanTeam(value: string) {
   );
 }
 
+function cleanBetikaLeague(rawLeague: string, country: string): string {
+  let cleaned = rawLeague.split(/\s*-\s*\d{1,2}\/\d{1,2}|\s*-->|\s*Betslip|\s*Odds/i)[0].trim();
+  cleaned = cleaned
+    .replace(/^Soccer,\s*/i, "")
+    .replace(/,\s*Soccer.*$/i, "")
+    .trim();
+  cleaned = cleaned.replace(/\s+\d{1,2}\/\d{1,2}.*$/, "").trim();
+  if (!cleaned || cleaned.length > 50) {
+    cleaned = country ? `${country} Football` : "Worldwide Football";
+  }
+  return canonicalCompetitionName(cleaned);
+}
+
 function parsePage(html: string, now = new Date()): BetikaFixture[] {
   const text = visibleText(html);
   const fixtures: BetikaFixture[] = [];
@@ -121,7 +134,7 @@ function parsePage(html: string, now = new Date()): BetikaFixture[] {
     if (!home || !away || home === away) continue;
     const date = dateFromBetika(prefix.date, now);
     if (!date) continue;
-    const league = canonicalCompetitionName(prefix.league || `${prefix.country} Football`);
+    const league = cleanBetikaLeague(prefix.league, prefix.country);
     fixtures.push({
       date,
       time: prefix.time,

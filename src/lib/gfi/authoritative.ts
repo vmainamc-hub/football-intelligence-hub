@@ -29,6 +29,9 @@ export type EvidenceItem = {
   source: "FREE_RESULTS" | "DERIVED_MODEL" | "OPTIONAL_PROVIDER";
   statement: string;
   quality: number;
+  provider?: string;
+  sourceFamily?: string;
+  provenance?: string;
 };
 export type ActionablePrediction = {
   market: "HOME" | "DRAW" | "AWAY" | "OVER 1.5" | "OVER 2.5" | "OVER 3.5" | "BTTS";

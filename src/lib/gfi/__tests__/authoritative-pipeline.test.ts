@@ -10,6 +10,7 @@ import {
 } from "../identity.ts";
 import { analyzeActiveAuthoritatively } from "../authoritative-runtime.ts";
 import { bestQualifiedMarket, buildMainstreamMarketMap } from "../market-map.ts";
+import { analyzeFreeMatch, runMatchAnalysis } from "../match-analysis.ts";
 import type { AuthoritativeMatchAnalysis, MatchRow } from "../intelligence.ts";
 
 test("1. Score Parsing: blank/empty/whitespace score cells return undefined, never 0", () => {
@@ -432,4 +433,50 @@ test("11. Resilience: Market map and reasoning safely handle missing or partial 
     assert.ok(best);
     assert.ok(best.market);
   });
+});
+
+test("12. Web Evidence Integration: Sparse fixture end-to-end analysis executes through authoritative pipeline and produces schema-valid evidenceLedger", async () => {
+  const sparseFixture = {
+    home: "Chapecoense",
+    away: "Operario Ferroviario",
+    date: "2026-06-15",
+    time: "20:00",
+    league: "Brasileiro Serie B",
+    code: "G1EA1KP0",
+    season: "2026",
+    source: "universal-sources",
+    sourceId: "sparse-test",
+  };
+
+  const analysis = await runMatchAnalysis(sparseFixture.code, sparseFixture);
+
+  assert.ok(analysis, "Analysis must return a result");
+  assert.equal(analysis.home.team, "Chapecoense");
+  assert.equal(analysis.away.team, "Operario Ferroviario");
+  assert.ok(analysis.probabilities, "Probabilities must be generated");
+  assert.ok(typeof analysis.probabilities.home === "number");
+  assert.ok(typeof analysis.probabilities.draw === "number");
+  assert.ok(typeof analysis.probabilities.away === "number");
+  assert.ok(Array.isArray(analysis.evidenceLedger), "evidenceLedger must be an array");
+
+  for (const item of analysis.evidenceLedger) {
+    assert.ok(typeof item.id === "string" && item.id.length > 0, "EvidenceItem.id must be a string");
+    assert.ok(
+      item.source === "FREE_RESULTS" ||
+        item.source === "DERIVED_MODEL" ||
+        item.source === "OPTIONAL_PROVIDER",
+      `EvidenceItem.source must be a valid source type, got: ${item.source}`
+    );
+    assert.ok(
+      typeof item.statement === "string" && item.statement.length > 0,
+      "EvidenceItem.statement must be a non-empty string"
+    );
+    assert.ok(
+      typeof item.quality === "number" && item.quality >= 0 && item.quality <= 100,
+      "EvidenceItem.quality must be a number between 0 and 100"
+    );
+  }
+
+  assert.ok(analysis.aiReasoningPacket, "aiReasoningPacket must exist");
+  assert.ok(analysis.aiReasoningPacket.research, "aiReasoningPacket.research must exist");
 });

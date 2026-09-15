@@ -139,10 +139,7 @@ export const researchFixture = createServerFn({ method: "GET" })
         `${a.date}|${a.time ?? ""}`.localeCompare(`${b.date}|${b.time ?? ""}`),
       ),
       sources = [
-        ...new Set([
-          ...matches.map((r) => r.source ?? "unknown"),
-          ...(webEvidence?.sources ?? []),
-        ]),
+        ...new Set([...matches.map((r) => r.source ?? "unknown"), ...(webEvidence?.sources ?? [])]),
       ],
       history = matches.filter((r) => r.hg !== undefined && r.ag !== undefined).length,
       fixtureEvidence = matches.some((r) =>

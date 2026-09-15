@@ -58,7 +58,8 @@ function parseScoreFromText(
   const rows: MatchRow[] = [];
   // Match patterns like "Team A 2-1 Team B", "Team A 2 : 0 Team B", "Team A (2) - (1) Team B"
   const scoreRegex = /(\d{1,2})\s*[-–:]\s*(\d{1,2})/g;
-  const dateRegex = /\b(202\d[-/]\d{1,2}[-/]\d{1,2})\b|\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+202\d)\b/i;
+  const dateRegex =
+    /\b(202\d[-/]\d{1,2}[-/]\d{1,2})\b|\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+202\d)\b/i;
 
   const lines = text.split(/\n|\.\s+/);
   for (const line of lines) {

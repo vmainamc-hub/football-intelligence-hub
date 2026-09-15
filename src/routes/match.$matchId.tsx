@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Database, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowLeft, Database, ShieldCheck, Sparkles, AlertTriangle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import {
   loadFreeFixtures,
@@ -245,6 +245,26 @@ function MatchIntelligence() {
               </span>
             </div>
           </div>
+
+          {result.warnings && result.warnings.length > 0 && (
+            <div className="mt-5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs">
+              <div className="flex items-center gap-2 font-medium text-amber-500">
+                <AlertTriangle className="size-4 shrink-0" />
+                <span>
+                  EPISTEMIC UNCERTAINTY & EVIDENCE CALIBRATION ({result.warnings.length} NOTICE
+                  {result.warnings.length > 1 ? "S" : ""})
+                </span>
+              </div>
+              <ul className="mt-2 space-y-1 text-muted-foreground">
+                {result.warnings.map((w, idx) => (
+                  <li key={idx} className="flex items-start gap-1.5 leading-relaxed">
+                    <span className="text-amber-500 font-mono select-none">•</span>
+                    <span>{w}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
 
         <section className="mt-6 panel p-6">

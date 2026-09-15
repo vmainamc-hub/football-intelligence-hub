@@ -91,9 +91,7 @@ export async function runMatchAnalysis(
   }
 
   const researchRows = mergeMatches(research.matches);
-  const targetGroup = groups.find(
-    (item) => item.code === code || item.league === fixture.league,
-  );
+  const targetGroup = groups.find((item) => item.code === code || item.league === fixture.league);
   const researchGroup: FreeLeague = {
     league: fixture.league ?? targetGroup?.league ?? "Worldwide Football",
     code: `RESEARCH_${code || "GLOBAL"}`,
@@ -113,95 +111,89 @@ export async function runMatchAnalysis(
     targetGroup?.code ?? livingEvidenceGroup?.code ?? researchGroup.code,
     expandedGroups,
   );
-    analysis.pipeline.historicalRowsLoaded = Math.max(
-      analysis.pipeline.historicalRowsLoaded,
-      research.reservoirMatches +
-        living.matchRows.length +
-        living.homeTeamRows.length +
-        living.awayTeamRows.length,
+  analysis.pipeline.historicalRowsLoaded = Math.max(
+    analysis.pipeline.historicalRowsLoaded,
+    research.reservoirMatches +
+      research.webMatches +
+      living.matchRows.length +
+      living.homeTeamRows.length +
+      living.awayTeamRows.length,
+  );
+  analysis.pipeline.competitionsLoaded = expandedGroups.length;
+  const additionalWarnings: string[] = [
+    `Public evidence ladder: ${research.coverage}% live/public coverage across ${research.distinctSources} live source families (${research.reservoirMatches} stored observations, ${research.liveMatches} live/public observations, ${research.webMatches ?? 0} web observations).`,
+    `Living evidence cell: ${living.evidenceCount} accumulated observations, ${living.sourceCount} source records, ${living.sourceFamilies.length} distinct source families, ${living.matchCompleteness}% match completeness.`,
+  ];
+  if (research.webEvidence?.attempted) {
+    additionalWarnings.push(
+      `Web evidence mining (Tavily): acquired ${research.webEvidence.usefulFootballResults} verified football sources, extracting ${research.webEvidence.datedScoreRows.length} dated score observations and ${research.webEvidence.structuredFacts.length} structured facts.`,
     );
-    analysis.pipeline.competitionsLoaded = expandedGroups.length;
-    const additionalWarnings: string[] = [
-      `Public evidence ladder: ${research.coverage}% live/public coverage across ${research.distinctSources} live source families (${research.reservoirMatches} stored observations, ${research.liveMatches} live/public observations, ${research.webMatches ?? 0} web observations).`,
-      `Living evidence cell: ${living.evidenceCount} accumulated observations, ${living.sourceCount} source records, ${living.sourceFamilies.length} distinct source families, ${living.matchCompleteness}% match completeness.`,
-    ];
-    if (research.webEvidence?.attempted) {
-      additionalWarnings.push(
-        `Web evidence mining (Tavily): acquired ${research.webEvidence.usefulFootballResults} verified football sources, extracting ${research.webEvidence.datedScoreRows.length} dated score observations and ${research.webEvidence.structuredFacts.length} structured facts.`,
-      );
-    }
+  }
+  analysis.warnings = [...new Set([...analysis.warnings, ...additionalWarnings])];
+  if (research.webEvidence?.structuredFacts?.length) {
+    research.webEvidence.structuredFacts.slice(0, 5).forEach((fact, idx) => {
+      analysis.evidenceLedger.push({
+        id: `TAVILY_${fact.sourceDomain}_${idx}`,
+        source: "OPTIONAL_PROVIDER",
+        statement: `Web evidence (${fact.sourceDomain}): ${fact.title}`,
+        quality: fact.factType === "score" ? 75 : 60,
+      });
+    });
+  }
+  analysis.aiReasoningPacket = {
+    ...analysis.aiReasoningPacket,
+    research: {
+      reservoirMatches: research.reservoirMatches,
+      liveMatches: research.liveMatches,
+      webMatches: research.webMatches ?? 0,
+      distinctSources: research.distinctSources,
+      sources: research.sources,
+      coverage: research.coverage,
+      searchedAt: research.searchedAt,
+      webEvidence: research.webEvidence
+        ? {
+            configured: research.webEvidence.configured,
+            attempted: research.webEvidence.attempted,
+            searchesAttempted: research.webEvidence.searchesAttempted,
+            resultsReturned: research.webEvidence.resultsReturned,
+            usefulFootballResults: research.webEvidence.usefulFootballResults,
+            datedScoreRowsCount: research.webEvidence.datedScoreRows.length,
+            factsCount: research.webEvidence.structuredFacts.length,
+            sources: research.webEvidence.sources,
+          }
+        : undefined,
+    },
+    livingEvidence: {
+      status: living.status,
+      evidenceCount: living.evidenceCount,
+      sourceCount: living.sourceCount,
+      sourceFamilies: living.sourceFamilies,
+      sourceFamilyCounts: living.sourceFamilyCounts,
+      matchCompleteness: living.matchCompleteness,
+      homeCompleteness: living.homeCompleteness,
+      awayCompleteness: living.awayCompleteness,
+      lastMinedAt: living.lastMinedAt,
+      reusableHistoricalRows:
+        living.matchRows.length + living.homeTeamRows.length + living.awayTeamRows.length,
+      reusableH2HRows: living.h2hRows.length,
+    },
+    researchPolicy: "ACCUMULATE_AND_REUSE_PUBLIC_EVIDENCE_BEFORE_TERMINAL_NO_DATA_STATE",
+    onDemandMiningAttempted: directLivingRows === 0,
+  };
+  if (analysis.home.played < 4 || analysis.away.played < 4) {
     analysis.warnings = [
       ...new Set([
         ...analysis.warnings,
-        ...additionalWarnings,
+        `Research-expanded team sample remains ${analysis.home.played} home-team observations / ${analysis.away.played} away-team observations; result remains mathematically available but downstream market qualification will not authorize a strong action.`,
       ]),
     ];
-    if (research.webEvidence?.structuredFacts?.length) {
-      for (const fact of research.webEvidence.structuredFacts.slice(0, 5)) {
-        analysis.evidenceLedger.push({
-          metric: `Web Intelligence (${fact.domain})`,
-          statement: fact.title,
-          homeImpact: "NEUTRAL",
-          awayImpact: "NEUTRAL",
-          confidence: fact.confidence,
-          source: "EXTERNAL_SOURCE",
-        });
-      }
-    }
     analysis.aiReasoningPacket = {
       ...analysis.aiReasoningPacket,
-      research: {
-        reservoirMatches: research.reservoirMatches,
-        liveMatches: research.liveMatches,
-        webMatches: research.webMatches ?? 0,
-        distinctSources: research.distinctSources,
-        sources: research.sources,
-        coverage: research.coverage,
-        searchedAt: research.searchedAt,
-        webEvidence: research.webEvidence
-          ? {
-              configured: research.webEvidence.configured,
-              attempted: research.webEvidence.attempted,
-              searchesAttempted: research.webEvidence.searchesAttempted,
-              resultsReturned: research.webEvidence.resultsReturned,
-              usefulFootballResults: research.webEvidence.usefulFootballResults,
-              datedScoreRowsCount: research.webEvidence.datedScoreRows.length,
-              factsCount: research.webEvidence.structuredFacts.length,
-              sources: research.webEvidence.sources,
-            }
-          : undefined,
-      },
-      livingEvidence: {
-        status: living.status,
-        evidenceCount: living.evidenceCount,
-        sourceCount: living.sourceCount,
-        sourceFamilies: living.sourceFamilies,
-        sourceFamilyCounts: living.sourceFamilyCounts,
-        matchCompleteness: living.matchCompleteness,
-        homeCompleteness: living.homeCompleteness,
-        awayCompleteness: living.awayCompleteness,
-        lastMinedAt: living.lastMinedAt,
-        reusableHistoricalRows:
-          living.matchRows.length + living.homeTeamRows.length + living.awayTeamRows.length,
-        reusableH2HRows: living.h2hRows.length,
-      },
-      researchPolicy: "ACCUMULATE_AND_REUSE_PUBLIC_EVIDENCE_BEFORE_TERMINAL_NO_DATA_STATE",
-      onDemandMiningAttempted: directLivingRows === 0,
+      researchState: "CONTINUE_PUBLIC_RESEARCH",
+      predictionSuppressed: false,
     };
-    if (analysis.home.played < 4 || analysis.away.played < 4) {
-      analysis.warnings = [
-        ...new Set([
-          ...analysis.warnings,
-          `Research-expanded team sample remains ${analysis.home.played} home-team observations / ${analysis.away.played} away-team observations; result remains mathematically available but downstream market qualification will not authorize a strong action.`,
-        ]),
-      ];
-      analysis.aiReasoningPacket = {
-        ...analysis.aiReasoningPacket,
-        researchState: "CONTINUE_PUBLIC_RESEARCH",
-        predictionSuppressed: false,
-      };
-    }
-    return analysis;
+  }
+  return analysis;
 }
 
 export const analyzeFreeMatch = createServerFn({ method: "POST" })

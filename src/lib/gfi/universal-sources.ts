@@ -128,10 +128,7 @@ function dedupe(rows: MatchRow[]) {
     return true;
   });
 }
-export async function getUniversalFixtures(
-  dateFrom: string,
-  dateTo: string,
-): Promise<MatchRow[]> {
+export async function getUniversalFixtures(dateFrom: string, dateTo: string): Promise<MatchRow[]> {
   const results: MatchRow[] = [];
   try {
     results.push(...(await getGlobalFallbackFixtures(dateFrom, dateTo)));
@@ -166,9 +163,7 @@ export async function queryUniversalFixtures(query: string): Promise<MatchRow[]>
     withTimeout(
       `${BASE}/api/widget/team/?sport=football&slug=${encodeURIComponent(slugifyTeam(team))}&limit=30`,
     )
-      .then(async (r) =>
-        r.ok ? parseSportScore(await r.json(), `team-${slugifyTeam(team)}`) : [],
-      )
+      .then(async (r) => (r.ok ? parseSportScore(await r.json(), `team-${slugifyTeam(team)}`) : []))
       .catch(() => [] as MatchRow[]),
   );
   for (const rows of await Promise.all(searches)) results.push(...rows);
@@ -197,23 +192,44 @@ export type UniversalSourceStatus = {
 export const UNIVERSAL_SOURCES: UniversalSourceStatus[] = [
   {
     name: "Football-Data.co.uk",
-    role: "historical results backbone",
+    role: "historical results backbone (12 leagues)",
     free: true,
     configured: true,
   },
-  { name: "OpenFootball", role: "open fixture/result enrichment", free: true, configured: true },
-  { name: "TheSportsDB", role: "daily global fixture fallback", free: true, configured: true },
+  {
+    name: "ESPN",
+    role: "worldwide scoreboards, domestic cups, continental tournaments",
+    free: true,
+    configured: true,
+  },
+  {
+    name: "Betika",
+    role: "live daily global fixture discovery and scheduling",
+    free: true,
+    configured: true,
+  },
   {
     name: "SportScore",
     role: "worldwide fixture/team discovery and enrichment",
     free: true,
     configured: true,
   },
-  { name: "StatArea", role: "external prediction opinion", free: true, configured: false },
   {
-    name: "Public news sources",
-    role: "news/injuries/team context",
+    name: "TheSportsDB",
+    role: "global daily fixture coverage and team metadata",
     free: true,
-    configured: false,
+    configured: true,
+  },
+  {
+    name: "OpenFootball",
+    role: "open multi-season global competition universe",
+    free: true,
+    configured: true,
+  },
+  {
+    name: "Tavily Web Evidence",
+    role: "on-demand web evidence mining for sparse fixtures",
+    free: false,
+    configured: typeof process !== "undefined" && !!process.env.TAVILY_API_KEY,
   },
 ];

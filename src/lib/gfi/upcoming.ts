@@ -32,20 +32,27 @@ function dateKey(value: string) {
 function kickoffInstant(match: MatchRow) {
   const kenya = kickoffKenya(match);
   if (!kenya) return undefined;
-  const m = kenya.match(/^(\d{4}-\d{2}-\d{2})(?:\+1)? (\d{2}):(\d{2})$/);
+  const m = kenya.match(/^(\d{4}-\d{2}-\d{2})(?:\+(\d+))?\s+(\d{2}):(\d{2})/);
   if (!m) return undefined;
   const day = m[1];
-  const shifted = kenya.includes("+1");
-  const isoDay = shifted ? new Date(`${day}T12:00:00Z`) : undefined;
-  if (isoDay) isoDay.setUTCDate(isoDay.getUTCDate() + 1);
-  const finalDay = isoDay ? isoDay.toISOString().slice(0, 10) : day;
-  return new Date(`${finalDay}T${m[2]}:${m[3]}:00+03:00`).getTime();
+  const shiftDays = m[2] ? Number(m[2]) : kenya.includes("+1") ? 1 : 0;
+  const finalDay = shiftDays > 0 ? addDaysKey(day, shiftDays) : day;
+  return new Date(`${finalDay}T${m[3]}:${m[4]}:00+03:00`).getTime();
 }
 
 function kenyaCalendarDate(match: MatchRow) {
   const kenya = kickoffKenya(match);
-  const matchDay = kenya?.match(/^(\d{4}-\d{2}-\d{2})(?:\+1)? /)?.[1];
-  if (matchDay) return matchDay;
+  if (kenya) {
+    const m = kenya.match(/^(\d{4}-\d{2}-\d{2})(?:\+(\d+))?\s+(\d{2}):(\d{2})/);
+    if (m) {
+      const baseDay = m[1];
+      const shiftDays = m[2] ? Number(m[2]) : kenya.includes("+1") ? 1 : 0;
+      if (shiftDays > 0) {
+        return addDaysKey(baseDay, shiftDays);
+      }
+      return baseDay;
+    }
+  }
   return dateKey(match.date);
 }
 

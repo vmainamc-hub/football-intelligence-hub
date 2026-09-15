@@ -1,3 +1,4 @@
+import { createServerFn } from "@tanstack/react-start";
 import { fetchFreeLeagueCsv, getFreeLeagueCsv } from "./free-data";
 import { fixtureIdentity, type ExternalFixture } from "./fixture-sources";
 import { fetchUniversalFixtures, getUniversalFixtures } from "./universal-sources";
@@ -208,7 +209,20 @@ export function getGlobalDiscoveryStatus(): GlobalDiscoveryStatus {
   return lastDiscoveryStatus;
 }
 
+export const fetchFreeFixtures = createServerFn({ method: "GET" }).handler(
+  async (): Promise<FreeLeague[]> => {
+    return loadFreeFixturesInternal();
+  },
+);
+
 export async function loadFreeFixtures(): Promise<FreeLeague[]> {
+  if (typeof window !== "undefined") {
+    return fetchFreeFixtures();
+  }
+  return loadFreeFixturesInternal();
+}
+
+async function loadFreeFixturesInternal(): Promise<FreeLeague[]> {
   const season = currentSeasonCode(),
     entries = Object.entries(LEAGUES);
   const settled = await Promise.allSettled(
@@ -270,15 +284,26 @@ function ukOffsetHours(key: string) {
     end = `${y}-10-${String(31 - oct.getUTCDay()).padStart(2, "0")}`;
   return key >= start && key < end ? 2 : 3;
 }
+function sourceToKenyaOffsetHours(source: string | undefined, dateKey: string): number {
+  if (source === "betika") {
+    // Betika times are published in Kenya time (EAT = UTC+3)
+    return 0;
+  }
+  if (source === "football-data") {
+    // Football-Data CSV times are UK local times (GMT in winter = UTC+3 to EAT; BST in summer = UTC+2 to EAT)
+    return ukOffsetHours(dateKey);
+  }
+  // ESPN, SportScore, TheSportsDB, OpenFootball provide UTC times.
+  // Kenya is UTC+3, so the offset from UTC to Kenya EAT is +3 hours.
+  return 3;
+}
+
 export function kickoffKenya(match: MatchRow) {
   if (!match.time) return undefined;
   const key = sourceDateKey(match.date),
     m = match.time.match(/^(\d{1,2}):(\d{2})/);
   if (!m) return undefined;
-  const offset =
-      match.source === "global-live" || match.source === "sportscore" || match.source === "betika"
-        ? 0
-        : ukOffsetHours(key),
+  const offset = sourceToKenyaOffsetHours(match.source, key),
     minutes = Number(m[1]) * 60 + Number(m[2]) + offset * 60,
     dayShift = Math.floor(minutes / 1440),
     normalized = ((minutes % 1440) + 1440) % 1440;

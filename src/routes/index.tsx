@@ -1,6 +1,17 @@
 import { useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { ArrowRight, Database, Search, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  ArrowRight,
+  Database,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
+  Globe,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import {
   findFixtures,
@@ -10,16 +21,23 @@ import {
 } from "@/lib/gfi/intelligence";
 import { getUpcomingFixturesByDay } from "@/lib/gfi/upcoming";
 import { searchUniversalFixtures } from "@/lib/gfi/universal-sources";
+import { inspectSystemDiagnostics } from "@/lib/gfi/source-registry";
 
 export const Route = createFileRoute("/")({ component: Home });
 
 function Home() {
   const [query, setQuery] = useState("");
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const data = useQuery({
     queryKey: ["free-fixtures"],
     queryFn: loadFreeFixtures,
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,
+  });
+  const diagnostics = useQuery({
+    queryKey: ["system-diagnostics"],
+    queryFn: () => inspectSystemDiagnostics(),
+    staleTime: 3 * 60_000,
   });
   const localResults = useMemo(() => findFixtures(data.data ?? [], query), [data.data, query]);
   const remote = useQuery({
@@ -82,6 +100,114 @@ function Home() {
               <span className="label-xs">{data.data?.length ?? 0} registered groups</span>
             )}
           </div>
+        </div>
+
+        {/* Global Discovery Diagnostics Bar (Part K) */}
+        <div className="mt-3 max-w-4xl rounded-lg border border-border bg-card/60 px-4 py-2.5 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span
+                className={`inline-block size-2 rounded-full ${
+                  diagnostics.data?.status === "OPTIMAL"
+                    ? "bg-emerald-500 animate-pulse"
+                    : diagnostics.data?.status === "DEGRADED"
+                      ? "bg-amber-500"
+                      : "bg-destructive"
+                }`}
+              />
+              <span className="font-medium tracking-wide">
+                GLOBAL DISCOVERY:{" "}
+                <span
+                  className={
+                    diagnostics.data?.status === "OPTIMAL"
+                      ? "text-emerald-500 font-semibold"
+                      : diagnostics.data?.status === "DEGRADED"
+                        ? "text-amber-500 font-semibold"
+                        : "text-destructive font-semibold"
+                  }
+                >
+                  {diagnostics.data?.status ?? "OPTIMAL"}
+                </span>
+              </span>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground">
+                {diagnostics.data?.activeSources ?? 6} active sources · {data.data?.length ?? 0}{" "}
+                leagues · {totalUpcoming} upcoming fixtures
+              </span>
+            </div>
+
+            <button
+              onClick={() => setShowDiagnostics(!showDiagnostics)}
+              className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              <span>Source breakdown</span>
+              {showDiagnostics ? (
+                <ChevronUp className="size-3.5" />
+              ) : (
+                <ChevronDown className="size-3.5" />
+              )}
+            </button>
+          </div>
+
+          {showDiagnostics && (
+            <div className="mt-3 border-t border-border pt-3 space-y-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-6 font-mono text-[11px]">
+                <div className="rounded border border-border/50 bg-background/50 p-2">
+                  <div className="text-muted-foreground">Football-Data</div>
+                  <div className="mt-1 font-semibold text-foreground">
+                    {diagnostics.data?.breakdown?.footballData ?? 12} rows
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">12 leagues</div>
+                </div>
+                <div className="rounded border border-border/50 bg-background/50 p-2">
+                  <div className="text-muted-foreground">ESPN Scoreboards</div>
+                  <div className="mt-1 font-semibold text-emerald-500">
+                    {diagnostics.data?.breakdown?.espn ?? "Active"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">cups & leagues</div>
+                </div>
+                <div className="rounded border border-border/50 bg-background/50 p-2">
+                  <div className="text-muted-foreground">Betika Lite</div>
+                  <div className="mt-1 font-semibold text-emerald-500">
+                    {diagnostics.data?.breakdown?.betika ?? "Active"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">daily global</div>
+                </div>
+                <div className="rounded border border-border/50 bg-background/50 p-2">
+                  <div className="text-muted-foreground">SportScore</div>
+                  <div className="mt-1 font-semibold text-emerald-500">
+                    {diagnostics.data?.breakdown?.sportscore ?? "Active"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">enrichment</div>
+                </div>
+                <div className="rounded border border-border/50 bg-background/50 p-2">
+                  <div className="text-muted-foreground">TheSportsDB</div>
+                  <div className="mt-1 font-semibold text-emerald-500">
+                    {diagnostics.data?.breakdown?.theSportsDb ?? "Active"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">metadata fallback</div>
+                </div>
+                <div className="rounded border border-border/50 bg-background/50 p-2">
+                  <div className="text-muted-foreground">OpenFootball</div>
+                  <div className="mt-1 font-semibold text-emerald-500">
+                    {diagnostics.data?.breakdown?.openFootball ?? "Active"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">universe repo</div>
+                </div>
+              </div>
+
+              {diagnostics.data?.failingSources && diagnostics.data.failingSources.length > 0 && (
+                <div className="mt-2 rounded bg-amber-500/10 p-2 text-amber-500 flex items-center gap-2">
+                  <AlertTriangle className="size-4 shrink-0" />
+                  <div>
+                    {diagnostics.data.failingSources.map((msg, i) => (
+                      <div key={i}>{msg}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         {query ? (
           <div className="mt-3 max-w-4xl overflow-hidden rounded-lg border border-border bg-card">
@@ -183,6 +309,7 @@ function FixtureRow({
   );
   const kenya = kickoffKenya(fixture);
   const time = kenya?.match(/ (\d{2}:\d{2})$/)?.[1];
+  const timeDisplay = time ? `${time} EAT${kenya?.includes("+1") ? " (+1d)" : ""}` : fixture.date;
   return (
     <Link
       to="/match/$matchId"
@@ -194,8 +321,7 @@ function FixtureRow({
           {fixture.home} <span className="text-muted-foreground">vs</span> {fixture.away}
         </div>
         <div className="label-xs mt-1">
-          {fixture.league ?? "Worldwide Football"} · {time ? `${time} EAT` : fixture.date} ·{" "}
-          {fixture.source ?? "public"}
+          {fixture.league ?? "Worldwide Football"} · {timeDisplay} · {fixture.source ?? "public"}
         </div>
       </div>
       <ArrowRight className="size-4 text-muted-foreground" />
