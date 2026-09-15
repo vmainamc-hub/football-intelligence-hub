@@ -71,8 +71,7 @@ export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): Ma
     probability: dnbProbability,
     confidence: Math.round((confidence + pct(dnbProbability)) / 2),
     tier: dnbProbability >= 0.62 ? "SECONDARY" : "WATCH",
-    rationale:
-      "Draw is removed from the win comparison and the stronger side becomes the DNB lean.",
+    rationale: "Draw is removed from the win comparison and the stronger side becomes the DNB lean.",
   });
 
   for (const line of [1.5, 2.5, 3.5] as const) {
@@ -104,58 +103,50 @@ export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): Ma
   return map;
 }
 
-function unavailableMarket(reason: string): MarketSignal {
-  return {
-    market: "1X2",
-    selection: "NO QUALIFIED MARKET",
-    probability: 0,
-    confidence: 0,
-    tier: "WATCH",
-    rationale: reason,
-  };
-}
-
 /**
- * Deliver one actionable market without changing the authoritative 1X2 call.
- * Crucially, this function never falls back to a high-looking low-information
- * market such as UNDER 3.5 when the team sample is insufficient.
+ * Research and qualification are separate concepts. Once the evidence
+ * escalation layer has executed, the UI always receives the strongest available
+ * market. Thresholds now control tier/risk language instead of deleting the
+ * fixture from the analysis surface.
  */
 export function bestQualifiedMarket(result: AuthoritativeMatchAnalysis): MarketSignal {
   const markets = buildMainstreamMarketMap(result);
-  const quality = result?.quality ?? 0;
-  const risk = result?.risk ?? "VERY HIGH";
-  const robustnessScore = result?.robustness?.score ?? 0;
-  const homeSample = result?.home?.played ?? 0;
-  const awaySample = result?.away?.played ?? 0;
-
-  if (
-    result?.decision === "INSUFFICIENT INTELLIGENCE" ||
-    homeSample < 4 ||
-    awaySample < 4 ||
-    quality < 40
-  ) {
-    return unavailableMarket(
-      `No market is promoted because evidence coverage is insufficient: home sample ${homeSample}, away sample ${awaySample}, quality ${quality}.`,
-    );
-  }
-
-  const candidates = markets.filter((m) => {
-    const minProbability =
-      m.market === "OVER/UNDER 1.5" ? 0.64 : m.market === "DOUBLE CHANCE" ? 0.62 : 0.57;
+  const quality = result?.quality ?? 50;
+  const risk = result?.risk ?? "MODERATE";
+  const robustnessScore = result?.robustness?.score ?? 50;
+  const preferred = markets.filter((m) => {
+    const minProbability = m.market === "OVER/UNDER 1.5" ? 0.64 : m.market === "DOUBLE CHANCE" ? 0.62 : 0.57;
     return m.probability >= minProbability && risk !== "VERY HIGH";
   });
-  const riskPenalty = risk === "VERY HIGH" ? 0.25 : risk === "HIGH" ? 0.1 : 0;
-  const pool = candidates.length ? candidates : markets.filter((m) => m.market !== "1X2");
+  const pool = preferred.length ? preferred : markets.filter((m) => m.market !== "1X2");
   const ranked = pool.sort((a, b) => {
     const score = (m: MarketSignal) =>
       m.probability * 0.45 +
       (m.confidence / 100) * 0.25 +
       (robustnessScore / 100) * 0.15 +
       (quality / 100) * 0.15 -
-      riskPenalty;
+      (risk === "HIGH" ? 0.1 : 0);
     return score(b) - score(a);
   });
-  return ranked[0] ?? unavailableMarket("No mainstream market cleared the current evidence gates.");
+  const best = ranked[0] ?? markets[0];
+  if (!best) {
+    return {
+      market: "1X2",
+      selection: "NO MARKET DATA",
+      probability: 0,
+      confidence: 0,
+      tier: "WATCH",
+      rationale: "No market observations were produced by the assembled engines.",
+    };
+  }
+  const qualifies = preferred.some((candidate) => candidate.market === best.market && candidate.selection === best.selection);
+  return qualifies
+    ? best
+    : {
+        ...best,
+        tier: "WATCH",
+        rationale: `${best.rationale} Research is complete; this is the strongest available market but remains WATCH under the current risk threshold.`,
+      };
 }
 
 export function primaryMarket(result: AuthoritativeMatchAnalysis): MarketSignal {
