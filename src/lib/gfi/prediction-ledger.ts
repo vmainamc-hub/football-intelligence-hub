@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { MatchRow } from "./intelligence";
 import type { AuthoritativeMatchAnalysis } from "./authoritative";
+import { sameTeamIdentity } from "./identity";
 
 export type LedgerPrediction = {
   id: string;
@@ -116,7 +117,16 @@ export function saveAuthoritativePrediction(
     engineIds: analysis.engines.map((e) => e.id),
     status: "OPEN",
   };
-  window.localStorage.setItem(KEY, JSON.stringify([row, ...readLedger()].slice(0, 500)));
+  const existing = readLedger();
+  const filtered = existing.filter(
+    (p) =>
+      !(
+        p.fixture.date === fixture.date &&
+        sameTeamIdentity(p.fixture.home, fixture.home) &&
+        sameTeamIdentity(p.fixture.away, fixture.away)
+      ),
+  );
+  window.localStorage.setItem(KEY, JSON.stringify([row, ...filtered].slice(0, 500)));
   return row;
 }
 

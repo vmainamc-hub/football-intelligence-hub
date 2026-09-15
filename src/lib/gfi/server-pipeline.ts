@@ -2,6 +2,7 @@ import type { MatchRow, FreeLeague } from "./intelligence";
 import { analyzeActiveAuthoritatively } from "./authoritative-runtime";
 import type { AuthoritativeMatchAnalysis } from "./authoritative";
 import { simulationEngineOutput } from "./simulation-engine";
+import { canonicalCompetitionName, sameTeamIdentity } from "./identity";
 
 export type AnalysisPipelineTrace = {
   fixtureId: string;
@@ -39,7 +40,8 @@ const normalizeName = (v: string) =>
     .replace(/\bfootball club\b/g, "")
     .replace(/\b(afc|fc|cf|sc)\b/g, "")
     .replace(/[^a-z0-9]/g, "");
-const sameTeam = (a: string, b: string) => normalizeName(a) === normalizeName(b);
+const sameTeam = (a: string, b: string) =>
+  sameTeamIdentity(a, b) || normalizeName(a) === normalizeName(b);
 const dateKey = (v: string) => {
   const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (!m) return v;
@@ -87,14 +89,21 @@ const buildModelContext = (
     ),
   );
   const teamContext = all.filter(
-    (x) => sameTeam(x.home, fixture.home) || sameTeam(x.away, fixture.home) || sameTeam(x.home, fixture.away) || sameTeam(x.away, fixture.away),
+    (x) =>
+      sameTeam(x.home, fixture.home) ||
+      sameTeam(x.away, fixture.home) ||
+      sameTeam(x.home, fixture.away) ||
+      sameTeam(x.away, fixture.away),
   );
 
   if (mode === "TARGET_COMPETITION") {
     return dedupe([
       ...target,
       ...teamContext.filter(
-        (x) => !targetSet.has(`${dateKey(x.date)}|${normalizeName(x.home)}|${normalizeName(x.away)}|${x.hg}|${x.ag}`),
+        (x) =>
+          !targetSet.has(
+            `${dateKey(x.date)}|${normalizeName(x.home)}|${normalizeName(x.away)}|${x.hg}|${x.ag}`,
+          ),
       ),
     ]).slice(-900);
   }
@@ -107,10 +116,18 @@ export function analyzeLoadedFixture(
   code: string,
   groups: FreeLeague[],
 ): ServerMatchAnalysis {
+  const targetLeague = canonicalCompetitionName(fixture.league);
   const group =
-    groups.find((g) => g.code === code) || groups.find((g) => g.league === fixture.league);
+    groups.find((g) => g.code === code) ||
+    groups.find((g) => canonicalCompetitionName(g.league) === targetLeague) ||
+    groups.find((g) => g.league === fixture.league);
   const target = prepare(fixture, group?.matches ?? []);
-  const all = dedupe(prepare(fixture, groups.flatMap((g) => g.matches)));
+  const all = dedupe(
+    prepare(
+      fixture,
+      groups.flatMap((g) => g.matches),
+    ),
+  );
   const home = all.filter((x) => sameTeam(x.home, fixture.home) || sameTeam(x.away, fixture.home));
   const away = all.filter((x) => sameTeam(x.home, fixture.away) || sameTeam(x.away, fixture.away));
   const mode: AnalysisPipelineTrace["evidenceMode"] =
@@ -130,9 +147,17 @@ export function analyzeLoadedFixture(
     existingSim && result.aiReasoningPacket?.simulation
       ? { engine: existingSim, summary: result.aiReasoningPacket.simulation }
       : simulationEngineOutput(result, 10000);
-  const engines = result.engines.some((e) => e.id === "SIMULATION")
-    ? result.engines
-    : [...result.engines, sim.engine];
+  const seenEngineIds = new Set<string>();
+  const engines: typeof result.engines = [];
+  for (const e of result.engines) {
+    if (!seenEngineIds.has(e.id)) {
+      seenEngineIds.add(e.id);
+      engines.push(e);
+    }
+  }
+  if (!seenEngineIds.has("SIMULATION")) {
+    engines.push(sim.engine);
+  }
   const generatedAt = new Date().toISOString();
 
   return {

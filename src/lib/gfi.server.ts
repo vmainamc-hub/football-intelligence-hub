@@ -4,6 +4,8 @@ import type { HistMatch, TargetMatch } from "./intel/features";
 import { describeProviders } from "./intel/providers";
 import { brier, logLoss, marketOutcome } from "./intel/settle";
 import { MARKETS, type Market } from "./intel/types";
+import { analyzeActiveAuthoritatively } from "./gfi/authoritative-runtime";
+import type { MatchRow } from "./gfi/intelligence";
 
 export const DATASETS = [
   { code: "en.1", name: "English Premier League", country: "England" },
@@ -344,6 +346,27 @@ export async function analyzeAndStore(matchId: string, runs = 50000) {
   const match = await getMatchDTO(matchId);
   if (!match) throw new Error("Match not found");
   const history = await loadHistoryFor(match);
+
+  // Authoritative runtime invocation
+  const fixtureRow: MatchRow = {
+    date: match.kickoff.slice(0, 10),
+    home: match.homeName,
+    away: match.awayName,
+    league: match.competition,
+    hg: match.ftHome ?? undefined,
+    ag: match.ftAway ?? undefined,
+  };
+  const historyRows: MatchRow[] = history.map((h) => ({
+    date: h.kickoff.slice(0, 10),
+    home: h.homeName,
+    away: h.awayName,
+    league: h.competition,
+    hg: h.ftHome,
+    ag: h.ftAway,
+    result: h.ftHome > h.ftAway ? "H" : h.ftHome < h.ftAway ? "A" : "D",
+  }));
+  const authoritative = analyzeActiveAuthoritatively(fixtureRow, historyRows);
+
   const result = analyze(toTarget(match), history, providers(), { runs });
 
   const { data: snapshot, error } = await supabaseAdmin
@@ -406,7 +429,7 @@ export async function analyzeAndStore(matchId: string, runs = 50000) {
     await supabaseAdmin.from("engine_predictions").insert(enginePredictions.slice(i, i + 400));
   }
 
-  return { snapshotId: snapshot.id, match, result };
+  return { snapshotId: snapshot.id, match, result, authoritative };
 }
 
 export async function settleAll() {

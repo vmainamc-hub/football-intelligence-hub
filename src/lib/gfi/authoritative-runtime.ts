@@ -122,9 +122,7 @@ export function analyzeActiveAuthoritatively(
   else if (p.draw === top && top >= 0.4 && conflict < 0.24) decision = "DRAW LEAN";
 
   const confidence = Math.round(
-    clamp(
-      0.42 + (1 - conflict) * 0.34 + Math.abs(top - 1 / 3) * 0.9 + quality / 500,
-    ) * 100,
+    clamp(0.42 + (1 - conflict) * 0.34 + Math.abs(top - 1 / 3) * 0.9 + quality / 500) * 100,
   );
   const warnings = [...new Set([...base.warnings, ...engines.flatMap((e) => e.limitations)])];
   const ledger = [

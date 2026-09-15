@@ -152,6 +152,7 @@ function FixtureRow({
       d: fixture.date,
       t: fixture.time ?? "",
       c: fixture.code ?? "",
+      l: fixture.league ?? "",
       s: fixture.source ?? "",
       i: fixture.sourceId ?? "",
     }),

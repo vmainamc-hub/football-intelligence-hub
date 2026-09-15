@@ -24,17 +24,35 @@ export const inspectReservoir = createServerFn({ method: "GET" }).handler(async 
     result.errors.push("Supabase URL or publishable key is missing.");
     return result;
   }
-  const db = createClient(url, publishable, { auth: { persistSession: false, autoRefreshToken: false } });
-  const tables = ["teams", "team_aliases", "competitions", "matches", "source_observations", "ingest_runs", "research_runs", "research_evidence", "predictions", "engine_predictions", "snapshots"];
+  const db = createClient(url, publishable, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const tables = [
+    "teams",
+    "team_aliases",
+    "competitions",
+    "matches",
+    "source_observations",
+    "ingest_runs",
+    "research_runs",
+    "research_evidence",
+    "predictions",
+    "engine_predictions",
+    "snapshots",
+  ];
   for (const table of tables) {
     const { error } = await db.from(table).select("*").limit(1);
     if (error) {
       const message = error.message || String(error);
-      if (/schema cache|does not exist|relation .* not found/i.test(message)) result.missingTables.push(table);
+      if (/schema cache|does not exist|relation .* not found/i.test(message))
+        result.missingTables.push(table);
       else result.errors.push(`${table}: ${message}`);
     }
   }
   result.schemaReady = result.missingTables.length === 0 && result.errors.length === 0;
-  if (!result.serverSecretConfigured) result.errors.push("Server-side Supabase secret is missing; privileged reservoir writes cannot run.");
+  if (!result.serverSecretConfigured)
+    result.errors.push(
+      "Server-side Supabase secret is missing; privileged reservoir writes cannot run.",
+    );
   return result;
 });

@@ -7,8 +7,9 @@
  * accepted when the cell actually contains a number. A genuine completed 0-0
  * still parses to 0 and stays distinguishable through its FTR result field.
  */
-export function parseScoreCell(value: string | undefined): number | undefined {
-  const raw = (value ?? "").trim();
+export function parseScoreCell(value: string | number | null | undefined): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  const raw = (value ?? "").toString().trim();
   if (!raw) return undefined;
   if (!/^-?\d+$/.test(raw)) return undefined;
   const parsed = Number(raw);
@@ -57,27 +58,94 @@ const TEAM_ALIASES: Record<string, string> = {
   "ath madrid": "Atletico Madrid",
   "atletico madrid": "Atletico Madrid",
   "ath bilbao": "Athletic Bilbao",
-  "athletic": "Athletic Bilbao",
-  "inter": "Inter",
-  "internazionale": "Inter",
+  athletic: "Athletic Bilbao",
+  inter: "Inter",
+  internazionale: "Inter",
   "nott m": "Nottingham Forest",
-  "nottingham": "Nottingham Forest",
+  nottingham: "Nottingham Forest",
+  "nottingham forest": "Nottingham Forest",
   "paris sg": "Paris Saint-Germain",
   "paris saint germain": "Paris Saint-Germain",
+  psg: "Paris Saint-Germain",
   "bayern munich": "Bayern Munich",
-  "sporting": "Sporting CP",
+  bayern: "Bayern Munich",
+  sporting: "Sporting CP",
   "sporting cp": "Sporting CP",
+  "tottenham hotspur": "Tottenham",
+  tottenham: "Tottenham",
+  spurs: "Tottenham",
+  "wolverhampton wanderers": "Wolves",
+  wolves: "Wolves",
+  wolverhampton: "Wolves",
+  "west ham united": "West Ham",
+  "west ham": "West Ham",
+  "newcastle united": "Newcastle",
+  newcastle: "Newcastle",
+  "brighton and hove albion": "Brighton",
+  brighton: "Brighton",
+  "aston villa": "Aston Villa",
+  villa: "Aston Villa",
+  "leicester city": "Leicester",
+  leicester: "Leicester",
+  "borussia dortmund": "Borussia Dortmund",
+  dortmund: "Borussia Dortmund",
+  "bayer leverkusen": "Bayer Leverkusen",
+  leverkusen: "Bayer Leverkusen",
+  "borussia mgladbach": "Borussia Monchengladbach",
+  "borussia monchengladbach": "Borussia Monchengladbach",
+  mgladbach: "Borussia Monchengladbach",
+  monchengladbach: "Borussia Monchengladbach",
+  "eintracht frankfurt": "Eintracht Frankfurt",
+  frankfurt: "Eintracht Frankfurt",
+  "rb leipzig": "RB Leipzig",
+  leipzig: "RB Leipzig",
+  "real sociedad": "Real Sociedad",
+  sociedad: "Real Sociedad",
+  "real betis": "Real Betis",
+  betis: "Real Betis",
+  "celta vigo": "Celta Vigo",
+  celta: "Celta Vigo",
+  juventus: "Juventus",
+  juve: "Juventus",
+  "ac milan": "AC Milan",
+  milan: "AC Milan",
+  "as roma": "Roma",
+  roma: "Roma",
+  lazio: "Lazio",
+  napoli: "Napoli",
+  fiorentina: "Fiorentina",
+  "olympique marseille": "Marseille",
+  marseille: "Marseille",
+  "olympique lyon": "Lyon",
+  lyon: "Lyon",
+  "as monaco": "Monaco",
+  monaco: "Monaco",
+  porto: "Porto",
+  benfica: "Benfica",
+  "manchester united": "Manchester United",
+  "manchester city": "Manchester City",
+  arsenal: "Arsenal",
+  chelsea: "Chelsea",
+  liverpool: "Liverpool",
 };
 
 /** Human-facing canonical team name, so one club is never stored twice. */
 export function canonicalTeamName(value: string): string {
   const key = canonicalTeamKey(value);
   if (TEAM_ALIASES[key]) return TEAM_ALIASES[key];
-  return value.trim().replace(/\s+/g, " ");
+  const cleaned = value
+    .replace(/\b(FC|AFC|CF|SC|SSC)\b/gi, "")
+    .trim()
+    .replace(/\s+/g, " ");
+  const cleanedKey = canonicalTeamKey(cleaned);
+  if (TEAM_ALIASES[cleanedKey]) return TEAM_ALIASES[cleanedKey];
+  return cleaned || value.trim().replace(/\s+/g, " ");
 }
 
 export function sameTeamIdentity(a: string, b: string): boolean {
-  return canonicalTeamKey(a) === canonicalTeamKey(b);
+  return (
+    canonicalTeamName(a) === canonicalTeamName(b) || canonicalTeamKey(a) === canonicalTeamKey(b)
+  );
 }
 
 const COMPETITION_ALIASES: Record<string, string> = {
@@ -86,6 +154,10 @@ const COMPETITION_ALIASES: Record<string, string> = {
   "spanish laliga": "La Liga",
   laliga: "La Liga",
   "primera division": "La Liga",
+  "spanish primera division": "La Liga",
+  "primera division de espana": "La Liga",
+  "la liga ea sports": "La Liga",
+  "laliga ea sports": "La Liga",
   "la liga 2": "La Liga 2",
   "spanish la liga 2": "La Liga 2",
   "segunda division": "La Liga 2",

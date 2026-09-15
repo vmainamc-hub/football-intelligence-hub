@@ -290,6 +290,7 @@ export function findFixtures(
     .slice(0, 48);
 }
 export { analyzeAuthoritatively } from "./authoritative";
+export { analyzeActiveAuthoritatively } from "./authoritative-runtime";
 export type {
   AuthoritativeMatchAnalysis,
   EngineOutput,
@@ -298,7 +299,7 @@ export type {
   ActionablePrediction,
 } from "./authoritative";
 export function analyzeMatch(fixture: MatchRow, allMatches: MatchRow[]): IntelligenceResult {
-  return analyzeAuthoritatively(fixture, allMatches);
+  return analyzeActiveAuthoritatively(fixture, allMatches);
 }
 export function leagueNames() {
   return LEAGUES;

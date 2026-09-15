@@ -10,9 +10,15 @@ function isNewSupabaseApiKey(value: string): boolean {
 
 function createSupabaseFetch(supabaseKey: string): typeof fetch {
   return (input, init) => {
-    const headers = new Headers(typeof Request !== "undefined" && input instanceof Request ? input.headers : undefined);
+    const headers = new Headers(
+      typeof Request !== "undefined" && input instanceof Request ? input.headers : undefined,
+    );
     if (init?.headers) new Headers(init.headers).forEach((value, key) => headers.set(key, value));
-    if (isNewSupabaseApiKey(supabaseKey) && headers.get("Authorization") === `Bearer ${supabaseKey}`) headers.delete("Authorization");
+    if (
+      isNewSupabaseApiKey(supabaseKey) &&
+      headers.get("Authorization") === `Bearer ${supabaseKey}`
+    )
+      headers.delete("Authorization");
     headers.set("apikey", supabaseKey);
     return fetch(input, { ...init, headers });
   };
@@ -35,7 +41,10 @@ function createMockSupabaseAdminClient() {
     maybeSingle: () => Promise.resolve({ data: null, error: null }),
     then: (resolve: (val: any) => any) => resolve({ data: [], count: 0, error: null }),
   };
-  return { from: () => noOpQuery, auth: { admin: { listUsers: async () => ({ data: { users: [] }, error: null }) } } } as unknown as ReturnType<typeof createClient<Database>>;
+  return {
+    from: () => noOpQuery,
+    auth: { admin: { listUsers: async () => ({ data: { users: [] }, error: null }) } },
+  } as unknown as ReturnType<typeof createClient<Database>>;
 }
 
 function createSupabaseAdminClient() {

@@ -66,7 +66,8 @@ export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): Ma
     probability: dnbProbability,
     confidence: Math.round((result.confidence + pct(dnbProbability)) / 2),
     tier: dnbProbability >= 0.62 ? "SECONDARY" : "WATCH",
-    rationale: "Draw is removed from the win comparison and the stronger side becomes the DNB lean.",
+    rationale:
+      "Draw is removed from the win comparison and the stronger side becomes the DNB lean.",
   });
 
   for (const line of [1.5, 2.5, 3.5] as const) {
@@ -100,22 +101,28 @@ export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): Ma
 
 /**
  * Deliver one actionable market without changing the authoritative 1X2 call.
- * The selector rewards probability, confidence and robustness and refuses to
- * promote a fragile market solely because it is numerically high.
+ * The selector rewards probability, confidence, robustness, and data quality,
+ * penalizes volatile risk, and refuses to promote a fragile market solely
+ * because it is numerically high.
  */
 export function bestQualifiedMarket(result: AuthoritativeMatchAnalysis): MarketSignal {
   const markets = buildMainstreamMarketMap(result);
   const candidates = markets.filter((m) => {
-    const minProbability = m.market === "OVER/UNDER 1.5" ? 0.64 : m.market === "DOUBLE CHANCE" ? 0.62 : 0.57;
-    return m.probability >= minProbability && result.quality >= 42 && result.risk !== "VERY HIGH";
+    const minProbability =
+      m.market === "OVER/UNDER 1.5" ? 0.64 : m.market === "DOUBLE CHANCE" ? 0.62 : 0.57;
+    return m.probability >= minProbability && result.quality >= 40 && result.risk !== "VERY HIGH";
   });
-  const ranked = (candidates.length ? candidates : markets.filter((m) => m.market !== "1X2")).sort(
-    (a, b) => {
-      const score = (m: MarketSignal) =>
-        m.probability * 0.55 + (m.confidence / 100) * 0.25 + (result.robustness.score / 100) * 0.2;
-      return score(b) - score(a);
-    },
-  );
+  const riskPenalty = result.risk === "VERY HIGH" ? 0.25 : result.risk === "HIGH" ? 0.1 : 0;
+  const pool = candidates.length ? candidates : markets.filter((m) => m.market !== "1X2");
+  const ranked = pool.sort((a, b) => {
+    const score = (m: MarketSignal) =>
+      m.probability * 0.45 +
+      (m.confidence / 100) * 0.25 +
+      (result.robustness.score / 100) * 0.15 +
+      (result.quality / 100) * 0.15 -
+      riskPenalty;
+    return score(b) - score(a);
+  });
   return ranked[0] ?? markets[0];
 }
 

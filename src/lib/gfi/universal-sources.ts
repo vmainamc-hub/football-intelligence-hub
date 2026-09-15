@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { fetchGlobalFallbackFixtures, type ExternalFixture } from "./fixture-sources";
 import type { MatchRow } from "./intelligence";
+import { canonicalCompetitionName, canonicalTeamName } from "./identity";
 
 const BASE = "https://sportscore.com";
 const TIMEOUT_MS = 9000;
@@ -36,7 +37,8 @@ function firstArray(value: unknown): unknown[] {
 
 function teamName(value: unknown) {
   if (typeof value === "string") return value.trim();
-  if (value && typeof value === "object") return String((value as Record<string, unknown>).name ?? "").trim();
+  if (value && typeof value === "object")
+    return String((value as Record<string, unknown>).name ?? "").trim();
   return "";
 }
 
@@ -44,26 +46,80 @@ function parseSportScore(payload: unknown, sourceIdPrefix: string): MatchRow[] {
   return firstArray(payload).flatMap((raw, index) => {
     if (!raw || typeof raw !== "object") return [];
     const item = raw as Record<string, unknown>;
-    const home = teamName(item.home ?? item.home_team ?? item.homeTeam ?? item.strHomeTeam ?? item.team1);
-    const away = teamName(item.away ?? item.away_team ?? item.awayTeam ?? item.strAwayTeam ?? item.team2);
-    const rawDate = item.date ?? item.dateEvent ?? item.time ?? item.kickoffUtc ?? item.utc_date ?? item.startTime ?? item.start_time;
+    const home = teamName(
+      item.home ?? item.home_team ?? item.homeTeam ?? item.strHomeTeam ?? item.team1,
+    );
+    const away = teamName(
+      item.away ?? item.away_team ?? item.awayTeam ?? item.strAwayTeam ?? item.team2,
+    );
+    const rawDate =
+      item.date ??
+      item.dateEvent ??
+      item.time ??
+      item.kickoffUtc ??
+      item.utc_date ??
+      item.startTime ??
+      item.start_time;
     const date = sourceDate(rawDate);
     if (!home || !away || !date) return [];
-    const timeValue = item.time ?? item.strTime ?? item.kickoffUtc ?? item.utc_date ?? item.startTime ?? item.start_time;
-    const timeMatch = typeof timeValue === "string" ? timeValue.match(/(?:T|\s)(\d{1,2}):(\d{2})/) : null;
+    const timeValue =
+      item.time ??
+      item.strTime ??
+      item.kickoffUtc ??
+      item.utc_date ??
+      item.startTime ??
+      item.start_time;
+    const timeMatch =
+      typeof timeValue === "string" ? timeValue.match(/(?:T|\s)(\d{1,2}):(\d{2})/) : null;
     const time = timeMatch ? `${timeMatch[1].padStart(2, "0")}:${timeMatch[2]}` : undefined;
-    const score = item.score && typeof item.score === "object" ? (item.score as Record<string, unknown>) : undefined;
-    const hgRaw = item.home_score ?? item.homeScore ?? item.intHomeScore ?? score?.home ?? score?.home_score;
-    const agRaw = item.away_score ?? item.awayScore ?? item.intAwayScore ?? score?.away ?? score?.away_score;
-    const hg = typeof hgRaw === "number" ? hgRaw : Number.isFinite(Number(hgRaw)) && String(hgRaw).trim() !== "" ? Number(hgRaw) : undefined;
-    const ag = typeof agRaw === "number" ? agRaw : Number.isFinite(Number(agRaw)) && String(agRaw).trim() !== "" ? Number(agRaw) : undefined;
-    const league = String(item.competition ?? item.league ?? item.strLeague ?? item.tournament ?? "Worldwide Football").trim();
-    return [{ date, time, home, away, hg, ag, result: hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined, league, source: "sportscore", sourceId: `${sourceIdPrefix}-${String(item.id ?? item.event_id ?? index)}` } satisfies MatchRow];
+    const score =
+      item.score && typeof item.score === "object"
+        ? (item.score as Record<string, unknown>)
+        : undefined;
+    const hgRaw =
+      item.home_score ?? item.homeScore ?? item.intHomeScore ?? score?.home ?? score?.home_score;
+    const agRaw =
+      item.away_score ?? item.awayScore ?? item.intAwayScore ?? score?.away ?? score?.away_score;
+    const hg =
+      typeof hgRaw === "number"
+        ? hgRaw
+        : Number.isFinite(Number(hgRaw)) && String(hgRaw).trim() !== ""
+          ? Number(hgRaw)
+          : undefined;
+    const ag =
+      typeof agRaw === "number"
+        ? agRaw
+        : Number.isFinite(Number(agRaw)) && String(agRaw).trim() !== ""
+          ? Number(agRaw)
+          : undefined;
+    const league = String(
+      item.competition ?? item.league ?? item.strLeague ?? item.tournament ?? "Worldwide Football",
+    ).trim();
+    return [
+      {
+        date,
+        time,
+        home: canonicalTeamName(home),
+        away: canonicalTeamName(away),
+        hg,
+        ag,
+        result:
+          hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
+        league: canonicalCompetitionName(league),
+        source: "sportscore",
+        sourceId: `${sourceIdPrefix}-${String(item.id ?? item.event_id ?? index)}`,
+      } satisfies MatchRow,
+    ];
   });
 }
 
 function slugifyTeam(value: string) {
-  return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function dedupe(rows: MatchRow[]) {
@@ -94,12 +150,19 @@ export const searchUniversalFixtures = createServerFn({ method: "GET" })
   .handler(async ({ data }): Promise<MatchRow[]> => {
     const q = data.query.trim();
     if (!q) return [];
-    const tokens = q.split(/\s+(?:vs?|v|versus)\s+/i).map((x) => x.trim()).filter(Boolean);
+    const tokens = q
+      .split(/\s+(?:vs?|v|versus)\s+/i)
+      .map((x) => x.trim())
+      .filter(Boolean);
     const teamTerms = (tokens.length >= 2 ? tokens : [q]).slice(0, 2);
     const results: MatchRow[] = [];
     const searches = teamTerms.map((team) =>
-      withTimeout(`${BASE}/api/widget/team/?sport=football&slug=${encodeURIComponent(slugifyTeam(team))}&limit=30`)
-        .then(async (r) => (r.ok ? parseSportScore(await r.json(), `team-${slugifyTeam(team)}`) : []))
+      withTimeout(
+        `${BASE}/api/widget/team/?sport=football&slug=${encodeURIComponent(slugifyTeam(team))}&limit=30`,
+      )
+        .then(async (r) =>
+          r.ok ? parseSportScore(await r.json(), `team-${slugifyTeam(team)}`) : [],
+        )
         .catch(() => []),
     );
     for (const rows of await Promise.all(searches)) results.push(...rows);
@@ -116,10 +179,25 @@ export type UniversalSourceStatus = {
   configured: boolean;
 };
 export const UNIVERSAL_SOURCES: UniversalSourceStatus[] = [
-  { name: "Football-Data.co.uk", role: "historical results backbone", free: true, configured: true },
+  {
+    name: "Football-Data.co.uk",
+    role: "historical results backbone",
+    free: true,
+    configured: true,
+  },
   { name: "OpenFootball", role: "open fixture/result enrichment", free: true, configured: true },
   { name: "TheSportsDB", role: "daily global fixture fallback", free: true, configured: true },
-  { name: "SportScore", role: "worldwide fixture/team discovery and enrichment", free: true, configured: true },
+  {
+    name: "SportScore",
+    role: "worldwide fixture/team discovery and enrichment",
+    free: true,
+    configured: true,
+  },
   { name: "StatArea", role: "external prediction opinion", free: true, configured: false },
-  { name: "Public news sources", role: "news/injuries/team context", free: true, configured: false },
+  {
+    name: "Public news sources",
+    role: "news/injuries/team context",
+    free: true,
+    configured: false,
+  },
 ];
