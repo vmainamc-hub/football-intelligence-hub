@@ -37,7 +37,7 @@ function sparseRepair(base:AuthoritativeMatchAnalysis, rows:MatchRow[]):Authorit
   const g=globalPrior(rows), p=oneX2(g.lh,g.la);
   const engines=base.engines.map(e=>{
     if(e.id==="FORM")return {...e,version:"form-sparse-prior-v1",probabilities:p,quality:35,confidence:35,values:{...e.values,priorMatches:g.n}};
-    if(e.id==="GOALS")return {...e,version:"goals-global-prior-v1",values:{...e.values,lambdaHome:g.lh,lambdaAway:g.la,expectedGoals:g.total},quality:45,confidence:35};
+    if(e.id==="GOALS")return {...e,version:"goals-global-prior-v1",probabilities:p,values:{...e.values,lambdaHome:g.lh,lambdaAway:g.la,expectedGoals:g.total},quality:45,confidence:35};
     if(e.id==="TOTALS"){
       const over=(line:number)=>1-[...Array(Math.floor(line)+1)].reduce((s,_,k)=>s+poisson(g.total,k),0);
       return {...e,version:"totals-global-prior-v1",values:{...e.values,expectedGoals:g.total,"over0.5":over(.5),"over1.5":over(1.5),"over2.5":over(2.5),"over3.5":over(3.5)},quality:45,confidence:35};
@@ -46,7 +46,8 @@ function sparseRepair(base:AuthoritativeMatchAnalysis, rows:MatchRow[]):Authorit
       const yes=(1-Math.exp(-g.lh))*(1-Math.exp(-g.la));
       return {...e,version:"btts-global-prior-v1",values:{...e.values,yes,no:1-yes},quality:45,confidence:35};
     }
-    if(e.id==="VENUE")return {...e,version:"venue-global-prior-v1",values:{...e.values,homeVenueWinRate:g.home},quality:35,confidence:35};
+    if(e.id==="VENUE")return {...e,version:"venue-global-prior-v1",probabilities:p,values:{...e.values,homeVenueWinRate:g.home},quality:35,confidence:35};
+    if(e.probabilities)return {...e,version:`${e.id.toLowerCase()}-global-prior-v1`,probabilities:p,quality:35,confidence:35};
     if(e.id==="DATA_QUALITY")return {...e,quality:25,confidence:25,values:{...e.values,completedMatches:0,globalPriorMatches:g.n}};
     return e;
   });
@@ -96,5 +97,7 @@ export function analyzeActiveAuthoritatively(f:MatchRow,rows:MatchRow[]):Authori
   const finalPrediction=decision==="HOME EDGE"?`${base.home.team} win`:decision==="AWAY EDGE"?`${base.away.team} win`:decision==="DRAW LEAN"?"Draw":(candidates[0]?.label??"No strong prediction");
   const sparseWarning=teamSample===0?`No direct historical match was matched to either team in the assembled context. Probabilities therefore use an explicit global prior (${rows.filter(x=>x.hg!==undefined&&x.ag!==undefined).length} completed rows), not a low-goal fallback.`:teamSample<8?`Only ${teamSample} direct team observations were matched; probabilities are available but epistemic confidence is reduced.`:undefined;
   const warnings=[...new Set([...base.warnings,...engines.flatMap(e=>e.limitations),sparseWarning].filter(Boolean) as string[])];
-  return {...base,analysisVersion:"gfi-authoritative-v7",engines,evidenceLedger:ledger,probabilities:p,quality,confidence,decision,verdict:decision,finalPrediction,predictedScore,predictions:candidates,warnings,consensus:{home:p.home,draw:p.draw,away:p.away,agreement,conflict,leader:top<.42?"none":p.home===top?"home":p.draw===top?"draw":"away"},robustness,risk,aiReasoningPacket:{...base.aiReasoningPacket,analysisVersion:"gfi-authoritative-v7",aiRole:"SINGLE_AUTHORITATIVE_EVIDENCE_WEIGHTED_ENGINE",confidenceDefinition:"Epistemic confidence is evidence/coverage/consensus quality; it is never equal to event probability.",teamSample,globalHistoricalRows:rows.filter(x=>x.hg!==undefined&&x.ag!==undefined).length,teamCoverage,globalCoverage,engineCoverage,quality,confidence,decision,finalPrediction,predictedScore,evidenceLedger:ledger,sparsePriorUsed:teamSample===0,activeEngineFamilies:ACTIVE_ENGINE_FAMILIES}};
+  const totalValues=Object.fromEntries(["over0.5","over1.5","over2.5","over3.5"].map(k=>[k,Number(totals[k]??0)]));
+  const yes=Number(bttsE.yes??0);
+  return {...base,analysisVersion:"gfi-authoritative-v7",engines,evidenceLedger:ledger,probabilities:p,totals:{...base.totals,...totalValues},btts:{yes,no:1-yes},quality,confidence,decision,verdict:decision,finalPrediction,predictedScore,predictions:candidates,warnings,consensus:{home:p.home,draw:p.draw,away:p.away,agreement,conflict,leader:top<.42?"none":p.home===top?"home":p.draw===top?"draw":"away"},robustness,risk,aiReasoningPacket:{...base.aiReasoningPacket,analysisVersion:"gfi-authoritative-v7",aiRole:"SINGLE_AUTHORITATIVE_EVIDENCE_WEIGHTED_ENGINE",confidenceDefinition:"Epistemic confidence is evidence/coverage/consensus quality; it is never equal to event probability.",teamSample,globalHistoricalRows:rows.filter(x=>x.hg!==undefined&&x.ag!==undefined).length,teamCoverage,globalCoverage,engineCoverage,quality,confidence,decision,finalPrediction,predictedScore,evidenceLedger:ledger,sparsePriorUsed:teamSample===0,activeEngineFamilies:ACTIVE_ENGINE_FAMILIES}};
 }
