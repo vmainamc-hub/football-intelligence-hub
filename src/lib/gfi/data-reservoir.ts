@@ -82,33 +82,69 @@ function kickoff(row: MatchRow) {
   return `${row.date}T12:00:00Z`;
 }
 
+/**
+ * Canonical team resolution. A club is looked up by its normalized identity
+ * (and its stored aliases) before anything is inserted, so spelling variants
+ * such as "Real Madrid" / "Real Madrid CF" or "Sp Braga" / "Sporting Clube de
+ * Braga" never create duplicate team entities.
+ */
 async function resolveTeams(db: SupabaseClient, names: string[], source: string) {
   const ids = new Map<string, string>();
-  for (const name of [...new Set(names)]) {
-    const { data: existing, error: lookupError } = await db
-      .from("teams")
-      .select("id,name")
-      .eq("name", name)
+  const byKey = new Map<string, string>();
+  for (const rawName of [...new Set(names)]) {
+    const name = canonicalTeamName(rawName);
+    const key = canonicalTeamKey(name);
+    const cached = byKey.get(key);
+    if (cached) {
+      ids.set(rawName, cached);
+      continue;
+    }
+
+    let id: string | undefined;
+    const { data: aliasHit } = await db
+      .from("team_aliases")
+      .select("team_id")
+      .eq("normalized_alias", key)
+      .limit(1)
       .maybeSingle();
-    if (lookupError) throw lookupError;
-    let id = existing?.id as string | undefined;
+    id = (aliasHit?.team_id as string | undefined) ?? undefined;
+
+    if (!id) {
+      const { data: existing, error: lookupError } = await db
+        .from("teams")
+        .select("id,name")
+        .eq("slug", slug(key))
+        .limit(1)
+        .maybeSingle();
+      if (lookupError) throw lookupError;
+      id = existing?.id as string | undefined;
+    }
+
     if (!id) {
       const { data: inserted, error } = await db
         .from("teams")
-        .insert({ name, slug: `${slug(name)}-${simpleHash(name).slice(0, 6)}` })
+        .insert({ name, slug: slug(key) })
         .select("id")
         .single();
       if (error) throw error;
       id = inserted.id as string;
     }
-    ids.set(name, id);
-    const normalized = canonicalName(name);
-    await db
-      .from("team_aliases")
-      .upsert(
-        { team_id: id, alias: name, normalized_alias: normalized, source, confidence: 1 },
+
+    byKey.set(key, id);
+    ids.set(rawName, id);
+    // Record every observed spelling against the one canonical team.
+    for (const alias of [...new Set([rawName, name])]) {
+      await db.from("team_aliases").upsert(
+        {
+          team_id: id,
+          alias,
+          normalized_alias: canonicalTeamKey(alias),
+          source,
+          confidence: 1,
+        },
         { onConflict: "normalized_alias,source" },
       );
+    }
   }
   return ids;
 }

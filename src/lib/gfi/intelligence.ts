@@ -152,29 +152,10 @@ function sourceDateKey(value: string) {
   const y = m[3].length === 2 ? Number(m[3]) + 2000 : Number(m[3]);
   return `${String(y).padStart(4, "0")}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
 }
+// Single competition-identity source of truth: "Spanish La Liga" and
+// "La Liga" resolve to one competition context everywhere.
 function normaliseLeague(value: string) {
-  const n = value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-  const a: Record<string, string> = {
-    "liga portugal": "Primeira Liga",
-    "liga portugal betclic": "Primeira Liga",
-    "portuguese primeira liga": "Primeira Liga",
-    "primeira liga": "Primeira Liga",
-    "english premier league": "Premier League",
-    "english championship": "Championship",
-    "german bundesliga": "Bundesliga",
-    "2 bundesliga": "2. Bundesliga",
-    "spanish laliga": "La Liga",
-    "spanish la liga": "La Liga",
-    "italian serie a": "Serie A",
-    "french ligue 1": "Ligue 1",
-    "dutch eredivisie": "Eredivisie",
-  };
-  return a[n] ?? (value.trim() || "Worldwide Football");
+  return canonicalCompetitionName(value);
 }
 function dynamicCode(league: string) {
   let h = 0;
