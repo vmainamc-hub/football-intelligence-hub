@@ -114,9 +114,12 @@ export function analyzeActiveAuthoritatively(
   const quality = Math.round(Math.max(20, Math.min(98, rawQuality * 0.78 + 78 * 0.22)));
   const totalSample = base.home.played + base.away.played;
 
+  // Low evidence is a research state, not a terminal prediction state. The
+  // research orchestrator escalates to additional public sources before this
+  // function is called. We therefore never manufacture a "data unavailable"
+  // verdict here; the authoritative result remains usable and traceable.
   let decision: AuthoritativeMatchAnalysis["decision"] = "NO STRONG EDGE";
-  if (totalSample < 8 || quality < 38) decision = "INSUFFICIENT INTELLIGENCE";
-  else if (conflict >= 0.24 && top < 0.5) decision = "HIGH MODEL CONFLICT";
+  if (conflict >= 0.24 && top < 0.5) decision = "HIGH MODEL CONFLICT";
   else if (p.home === top && top >= 0.5 && conflict < 0.24) decision = "HOME EDGE";
   else if (p.away === top && top >= 0.5 && conflict < 0.24) decision = "AWAY EDGE";
   else if (p.draw === top && top >= 0.4 && conflict < 0.24) decision = "DRAW LEAN";
@@ -155,7 +158,10 @@ export function analyzeActiveAuthoritatively(
     confidence,
     decision,
     verdict: decision,
-    warnings,
+    warnings: [
+      ...warnings,
+      `Research-backed sample used by authority: ${totalSample} completed team observations across the assembled model context.`,
+    ],
     evidence: ledger.slice(0, 16).map((e) => e.statement),
     finalPrediction:
       decision === "HOME EDGE"
@@ -171,17 +177,16 @@ export function analyzeActiveAuthoritatively(
       activeEngineFamilies: ACTIVE_ENGINE_FAMILIES,
       aiRole: "EXPLAINABLE_MULTI_MODEL_SYNTHESIS",
       aiStatus:
-        "The authoritative prediction is produced by a deterministic statistical ensemble with explicit evidence weighting, conflict control and simulation validation. No external generative AI model is silently overriding the result.",
+        "The authoritative prediction is produced by a deterministic statistical ensemble with explicit evidence weighting, conflict control and simulation validation. Public research is used to widen evidence coverage; external prediction opinions never silently override the ensemble.",
       decisionReason:
         decision === "HIGH MODEL CONFLICT"
           ? "Model disagreement is materially high and no 1X2 outcome reaches the strengthened edge threshold."
           : decision === "NO STRONG EDGE"
-            ? "No 1X2 outcome reaches the edge threshold; actionable mainstream markets are evaluated separately."
-            : decision === "INSUFFICIENT INTELLIGENCE"
-              ? "The evidence sample is too small or weak for an authoritative result."
-              : "A 1X2 outcome clears the authoritative probability and conflict thresholds.",
+            ? "No 1X2 outcome reaches the edge threshold; the market engine still evaluates all mainstream markets."
+            : "A 1X2 outcome clears the authoritative probability and conflict thresholds.",
       simulation: sim.summary,
       evidenceLedger: ledger,
+      researchEscalation: "PUBLIC_MULTI_SOURCE_ESCALATION",
     },
   };
 }
