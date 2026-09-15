@@ -5,16 +5,22 @@ const BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer";
 const TIMEOUT_MS = 10_000;
 
 /**
- * ESPN's public site scoreboard is used only as a discovery/enrichment source.
- * No API key is required. The date-range form keeps requests bounded while
- * covering leagues that are absent from Football-Data/OpenFootball (including
- * domestic cups).
+ * ESPN public scoreboards are used as free discovery/enrichment sources.
+ * No API key is required. One date-range request per competition keeps the
+ * daily fixture sweep bounded and covers domestic cups plus major leagues.
  */
 const LEAGUES: Array<{ slug: string; name: string; code: string }> = [
   { slug: "eng.1", name: "Premier League", code: "E0" },
   { slug: "eng.2", name: "Championship", code: "E1" },
+  { slug: "eng.3", name: "League One", code: "E2" },
+  { slug: "eng.4", name: "League Two", code: "E3" },
+  { slug: "eng.5", name: "National League", code: "E5" },
+  { slug: "eng.fa", name: "FA Cup", code: "FAC" },
+  { slug: "eng.league_cup", name: "EFL Cup", code: "EFL" },
+  { slug: "eng.trophy", name: "EFL Trophy", code: "EFLT" },
   { slug: "esp.1", name: "La Liga", code: "SP1" },
   { slug: "esp.2", name: "La Liga 2", code: "SP2" },
+  { slug: "esp.copa_del_rey", name: "Copa del Rey", code: "CDR" },
   { slug: "ger.1", name: "Bundesliga", code: "D1" },
   { slug: "ger.2", name: "2. Bundesliga", code: "D2" },
   { slug: "ita.1", name: "Serie A", code: "I1" },
@@ -30,8 +36,8 @@ const LEAGUES: Array<{ slug: string; name: string; code: string }> = [
   { slug: "aut.1", name: "Austrian Bundesliga", code: "A1" },
   { slug: "sui.1", name: "Swiss Super League", code: "Z1" },
   { slug: "dnk.1", name: "Danish Superliga", code: "DK1" },
-  { slug: "nor.1", name: "Norwegian Eliteserien", code: "NOK1" },
-  { slug: "swe.1", name: "Swedish Allsvenskan", code: "SW1" },
+  { slug: "nor.1", name: "Norwegian Eliteserien", code: "NOR1" },
+  { slug: "swe.1", name: "Swedish Allsvenskan", code: "SWE1" },
   { slug: "usa.1", name: "MLS", code: "USA1" },
   { slug: "mex.1", name: "Liga MX", code: "MEX1" },
   { slug: "bra.1", name: "Brasileirão", code: "BRA1" },
@@ -82,10 +88,9 @@ function parseEvents(payload: unknown, leagueName: string, code: string): MatchR
 
     const homeScore = parseScoreCell(home?.score as string | number | undefined);
     const awayScore = parseScoreCell(away?.score as string | number | undefined);
-    const completed = Boolean(
-      (item.status as Record<string, unknown> | undefined)?.type &&
-        ((item.status as Record<string, unknown>).type as Record<string, unknown>).completed === true,
-    );
+    const status = item.status as Record<string, unknown> | undefined;
+    const type = status?.type as Record<string, unknown> | undefined;
+    const completed = type?.completed === true;
 
     return [
       {
