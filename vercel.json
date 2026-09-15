@@ -3,6 +3,10 @@
     {
       "path": "/api/fixture-sync",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/evidence-mine",
+      "schedule": "0 4 * * *"
     }
   ]
 }
