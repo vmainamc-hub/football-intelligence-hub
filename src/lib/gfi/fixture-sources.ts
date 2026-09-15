@@ -187,7 +187,10 @@ export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
     return results.filter((match) => {
       const date = sourceDateKey(match.date);
       if (date < data.dateFrom || date > data.dateTo) return false;
-      const id = `${date}|${match.home.toLowerCase()}|${match.away.toLowerCase()}|${match.time ?? ""}|${match.source}`;
+      // Source-independent fixture identity: the same scheduled match should
+      // only be exposed once even when ESPN and TheSportsDB both report it.
+      // Prefer the first source encountered above as the canonical display row.
+      const id = `${date}|${match.home.toLowerCase()}|${match.away.toLowerCase()}|${match.time ?? ""}`;
       if (seen.has(id)) return false;
       seen.add(id);
       return true;
