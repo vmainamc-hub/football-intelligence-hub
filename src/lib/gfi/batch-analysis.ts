@@ -2,7 +2,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { loadFreeFixtures, type MatchRow, type FreeLeague } from "./intelligence";
 import { analyzeLoadedFixture, type ServerMatchAnalysis } from "./server-pipeline";
 import { bestQualifiedMarket, buildMainstreamMarketMap, type MarketSignal } from "./market-map";
-import { sameTeamIdentity } from "./identity";
 
 export type BatchIntent = {
   raw: string;
@@ -118,10 +117,6 @@ function parseIntent(raw: string): BatchIntent {
   return { raw, count, scope, mode: market ? "MARKET" : mode, market, marketSelection };
 }
 
-function sameTeam(a: string, b: string) {
-  return sameTeamIdentity(a, b) || normalizeText(a) === normalizeText(b);
-}
-
 function fixtureId(fixture: MatchRow) {
   return [dateKey(fixture.date), normalizeText(fixture.home), normalizeText(fixture.away), fixture.time ?? ""].join("|");
 }
@@ -174,7 +169,6 @@ function exactMarketSignal(result: ServerMatchAnalysis, market: BatchIntent["mar
     } satisfies MarketSignal;
   }
 
-  if (market === "1X2" as never && selection) return map.find((m) => m.market === "1X2" && m.selection === selection);
   const candidates = map.filter((item) => item.market === market);
   return candidates.sort((a, b) => b.probability - a.probability)[0];
 }
