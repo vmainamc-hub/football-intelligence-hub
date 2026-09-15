@@ -2,13 +2,13 @@ import type { MatchRow } from "./intelligence";
 import { canonicalCompetitionName, canonicalTeamName, parseScoreCell } from "./identity";
 
 const BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer";
-const TIMEOUT_MS = 10_000;
+const TIMEOUT_MS = 7_000;
 const CACHE_TTL_MS = 5 * 60_000;
 
 /**
  * ESPN public scoreboards are used as free discovery/enrichment sources.
- * No API key is required. One date-range request per competition keeps the
- * daily fixture sweep bounded and covers domestic cups plus major leagues.
+ * No API key is required. Requests are bounded and isolated so one unavailable
+ * competition cannot suppress the global fixture universe.
  */
 const LEAGUES: Array<{ slug: string; name: string; code: string }> = [
   { slug: "eng.1", name: "Premier League", code: "E0" },
@@ -125,14 +125,18 @@ export async function fetchEspnFixtures(dateFrom: string, dateTo: string): Promi
   if (cache && cache.key === cacheKey && Date.now() - cache.at < CACHE_TTL_MS) return cache.rows;
 
   const out: MatchRow[] = [];
-  const chunkSize = 6;
+  const chunkSize = 12;
   for (let start = 0; start < LEAGUES.length; start += chunkSize) {
     const batch = await Promise.allSettled(
       LEAGUES.slice(start, start + chunkSize).map(async (league) => {
         const dates = `${dateFrom.replace(/-/g, "")}-${dateTo.replace(/-/g, "")}`;
-        const response = await withTimeout(`${BASE}/${league.slug}/scoreboard?dates=${dates}`);
-        if (!response.ok) return [] as MatchRow[];
-        return parseEvents(await response.json(), league.name, league.code);
+        try {
+          const response = await withTimeout(`${BASE}/${league.slug}/scoreboard?dates=${dates}`);
+          if (!response.ok) return [] as MatchRow[];
+          return parseEvents(await response.json(), league.name, league.code);
+        } catch {
+          return [] as MatchRow[];
+        }
       }),
     );
     for (const result of batch) if (result.status === "fulfilled") out.push(...result.value);
