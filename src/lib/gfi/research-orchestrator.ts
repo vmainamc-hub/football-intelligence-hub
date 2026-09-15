@@ -56,117 +56,124 @@ const norm = (v: string) =>
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
+export async function performFixtureResearchInternal(queryRaw: string): Promise<ResearchResult> {
+  const query = queryRaw.trim(),
+    searchedAt = new Date().toISOString();
+  if (!query)
+    return {
+      query,
+      matches: [],
+      reservoirMatches: 0,
+      liveMatches: 0,
+      webMatches: 0,
+      distinctSources: 0,
+      sources: [],
+      coverage: 0,
+      searchedAt,
+    };
+  const { home, away } = parseTeams(query),
+    fixtureDate = dateFromQuery(query),
+    today = new Date().toISOString().slice(0, 10),
+    from = fixtureDate ? addDays(fixtureDate, -3) : addDays(today, -3),
+    to = fixtureDate ? addDays(fixtureDate, 3) : addDays(today, 3);
+  const [stored, live, espn] = await Promise.all([
+    reservoirHistoricalContext(home, away, 500).catch(() => [] as ReservoirMatch[]),
+    queryUniversalFixtures(stripDate(query)).catch(() => [] as MatchRow[]),
+    fetchEspnFixtures(from, to).catch(() => [] as MatchRow[]),
+  ]);
+  const merged = new Map<string, MatchRow>();
+  for (const r of stored) {
+    const m = toMatch(r);
+    merged.set(identity(m), m);
+  }
+  for (const r of live) merged.set(identity(r), r);
+  const hk = norm(home),
+    ak = norm(away);
+  let matchedEspn = 0;
+  for (const r of espn) {
+    const rh = norm(r.home),
+      ra = norm(r.away),
+      exact =
+        hk && ak && (rh.includes(hk) || hk.includes(rh)) && (ra.includes(ak) || ak.includes(ra)),
+      reverse =
+        hk && ak && (rh.includes(ak) || ak.includes(rh)) && (ra.includes(hk) || hk.includes(ra));
+    if (exact || reverse) {
+      matchedEspn++;
+      merged.set(identity(r), r);
+    }
+  }
+
+  // Evidence sufficiency check:
+  // If internal historical context is sparse (< 8 completed matches), automatically
+  // acquire additional web evidence using Tavily for recent results, H2H, and form.
+  let webEvidence: WebEvidenceResult | undefined;
+  let webMatches = 0;
+  const internalHistoryCount = [...merged.values()].filter(
+    (r) => r.hg !== undefined && r.ag !== undefined,
+  ).length;
+
+  if (internalHistoryCount < 8 && home && away) {
+    try {
+      webEvidence = await acquireWebEvidence({
+        home,
+        away,
+        fixtureDate,
+      });
+      if (webEvidence && webEvidence.datedScoreRows.length > 0) {
+        for (const r of webEvidence.datedScoreRows) {
+          const key = identity(r);
+          if (!merged.has(key)) {
+            merged.set(key, r);
+            webMatches++;
+          }
+        }
+      }
+    } catch {
+      // Web evidence failure isolation: Never crashes research orchestration
+    }
+  }
+
+  const matches = [...merged.values()].sort((a, b) =>
+      `${a.date}|${a.time ?? ""}`.localeCompare(`${b.date}|${b.time ?? ""}`),
+    ),
+    sources = [
+      ...new Set([...matches.map((r) => r.source ?? "unknown"), ...(webEvidence?.sources ?? [])]),
+    ],
+    history = matches.filter((r) => r.hg !== undefined && r.ag !== undefined).length,
+    fixtureEvidence = matches.some((r) =>
+      fixtureDate ? r.date === fixtureDate : r.hg === undefined || r.ag === undefined,
+    ),
+    coverage = Math.min(
+      100,
+      Math.round(
+        Math.min(50, history * 2) +
+          (fixtureEvidence ? 20 : 0) +
+          (sources.length >= 2 ? 20 : 0) +
+          (history > 10 ? 10 : 0),
+      ),
+    );
+  return {
+    query,
+    matches,
+    reservoirMatches: stored.length,
+    liveMatches: live.length + matchedEspn,
+    webMatches,
+    distinctSources: sources.length,
+    sources,
+    coverage,
+    searchedAt,
+    webEvidence,
+  };
+}
+
 export const researchFixture = createServerFn({ method: "GET" })
   .validator((input: { query: string }) => input)
   .handler(async ({ data }): Promise<ResearchResult> => {
-    const query = data.query.trim(),
-      searchedAt = new Date().toISOString();
-    if (!query)
-      return {
-        query,
-        matches: [],
-        reservoirMatches: 0,
-        liveMatches: 0,
-        webMatches: 0,
-        distinctSources: 0,
-        sources: [],
-        coverage: 0,
-        searchedAt,
-      };
-    const { home, away } = parseTeams(query),
-      fixtureDate = dateFromQuery(query),
-      today = new Date().toISOString().slice(0, 10),
-      from = fixtureDate ? addDays(fixtureDate, -3) : addDays(today, -3),
-      to = fixtureDate ? addDays(fixtureDate, 3) : addDays(today, 3);
-    const [stored, live, espn] = await Promise.all([
-      reservoirHistoricalContext(home, away, 500).catch(() => [] as ReservoirMatch[]),
-      queryUniversalFixtures(stripDate(query)).catch(() => [] as MatchRow[]),
-      fetchEspnFixtures(from, to).catch(() => [] as MatchRow[]),
-    ]);
-    const merged = new Map<string, MatchRow>();
-    for (const r of stored) {
-      const m = toMatch(r);
-      merged.set(identity(m), m);
-    }
-    for (const r of live) merged.set(identity(r), r);
-    const hk = norm(home),
-      ak = norm(away);
-    let matchedEspn = 0;
-    for (const r of espn) {
-      const rh = norm(r.home),
-        ra = norm(r.away),
-        exact =
-          hk && ak && (rh.includes(hk) || hk.includes(rh)) && (ra.includes(ak) || ak.includes(ra)),
-        reverse =
-          hk && ak && (rh.includes(ak) || ak.includes(rh)) && (ra.includes(hk) || hk.includes(ra));
-      if (exact || reverse) {
-        matchedEspn++;
-        merged.set(identity(r), r);
-      }
-    }
-
-    // Evidence sufficiency check:
-    // If internal historical context is sparse (< 8 completed matches), automatically
-    // acquire additional web evidence using Tavily for recent results, H2H, and form.
-    let webEvidence: WebEvidenceResult | undefined;
-    let webMatches = 0;
-    const internalHistoryCount = [...merged.values()].filter(
-      (r) => r.hg !== undefined && r.ag !== undefined,
-    ).length;
-
-    if (internalHistoryCount < 8 && home && away) {
-      try {
-        webEvidence = await acquireWebEvidence({
-          home,
-          away,
-          fixtureDate,
-        });
-        if (webEvidence && webEvidence.datedScoreRows.length > 0) {
-          for (const r of webEvidence.datedScoreRows) {
-            const key = identity(r);
-            if (!merged.has(key)) {
-              merged.set(key, r);
-              webMatches++;
-            }
-          }
-        }
-      } catch {
-        // Web evidence failure isolation: Never crashes research orchestration
-      }
-    }
-
-    const matches = [...merged.values()].sort((a, b) =>
-        `${a.date}|${a.time ?? ""}`.localeCompare(`${b.date}|${b.time ?? ""}`),
-      ),
-      sources = [
-        ...new Set([...matches.map((r) => r.source ?? "unknown"), ...(webEvidence?.sources ?? [])]),
-      ],
-      history = matches.filter((r) => r.hg !== undefined && r.ag !== undefined).length,
-      fixtureEvidence = matches.some((r) =>
-        fixtureDate ? r.date === fixtureDate : r.hg === undefined || r.ag === undefined,
-      ),
-      coverage = Math.min(
-        100,
-        Math.round(
-          Math.min(50, history * 2) +
-            (fixtureEvidence ? 20 : 0) +
-            (sources.length >= 2 ? 20 : 0) +
-            (history > 10 ? 10 : 0),
-        ),
-      );
-    return {
-      query,
-      matches,
-      reservoirMatches: stored.length,
-      liveMatches: live.length + matchedEspn,
-      webMatches,
-      distinctSources: sources.length,
-      sources,
-      coverage,
-      searchedAt,
-      webEvidence,
-    };
+    return performFixtureResearchInternal(data.query);
   });
 export async function researchTeamOrFixture(query: string) {
-  return researchFixture({ data: { query } });
+  if (typeof window !== "undefined") {
+    return researchFixture({ data: { query } });
+  }
+  return performFixtureResearchInternal(query);
 }

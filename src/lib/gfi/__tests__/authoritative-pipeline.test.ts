@@ -460,20 +460,23 @@ test("12. Web Evidence Integration: Sparse fixture end-to-end analysis executes 
   assert.ok(Array.isArray(analysis.evidenceLedger), "evidenceLedger must be an array");
 
   for (const item of analysis.evidenceLedger) {
-    assert.ok(typeof item.id === "string" && item.id.length > 0, "EvidenceItem.id must be a string");
+    assert.ok(
+      typeof item.id === "string" && item.id.length > 0,
+      "EvidenceItem.id must be a string",
+    );
     assert.ok(
       item.source === "FREE_RESULTS" ||
         item.source === "DERIVED_MODEL" ||
         item.source === "OPTIONAL_PROVIDER",
-      `EvidenceItem.source must be a valid source type, got: ${item.source}`
+      `EvidenceItem.source must be a valid source type, got: ${item.source}`,
     );
     assert.ok(
       typeof item.statement === "string" && item.statement.length > 0,
-      "EvidenceItem.statement must be a non-empty string"
+      "EvidenceItem.statement must be a non-empty string",
     );
     assert.ok(
       typeof item.quality === "number" && item.quality >= 0 && item.quality <= 100,
-      "EvidenceItem.quality must be a number between 0 and 100"
+      "EvidenceItem.quality must be a number between 0 and 100",
     );
   }
 

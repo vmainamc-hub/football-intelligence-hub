@@ -50,17 +50,20 @@ export async function runMatchAnalysis(
 ): Promise<ServerMatchAnalysis> {
   const [groups, research, initialLiving] = await Promise.all([
     loadFreeFixtures(),
-    researchTeamOrFixture(`${fixture.home} vs ${fixture.away} ${fixture.date}`).catch(() => ({
-      matches: [],
-      reservoirMatches: 0,
-      liveMatches: 0,
-      webMatches: 0,
-      distinctSources: 0,
-      sources: [],
-      coverage: 0,
-      query: "",
-      searchedAt: new Date().toISOString(),
-    })),
+    researchTeamOrFixture(`${fixture.home} vs ${fixture.away} ${fixture.date}`).catch((err) => {
+      console.error("[runMatchAnalysis] researchTeamOrFixture failed:", err);
+      return {
+        matches: [],
+        reservoirMatches: 0,
+        liveMatches: 0,
+        webMatches: 0,
+        distinctSources: 0,
+        sources: [],
+        coverage: 0,
+        query: "",
+        searchedAt: new Date().toISOString(),
+      };
+    }),
     loadLivingEvidence(fixture).catch(() => ({
       matchRows: [],
       h2hRows: [],
@@ -135,6 +138,8 @@ export async function runMatchAnalysis(
       analysis.evidenceLedger.push({
         id: `TAVILY_${fact.sourceDomain}_${idx}`,
         source: "OPTIONAL_PROVIDER",
+        provider: "Tavily / web",
+        sourceFamily: "Tavily / web",
         statement: `Web evidence (${fact.sourceDomain}): ${fact.title}`,
         quality: fact.factType === "score" ? 75 : 60,
       });
