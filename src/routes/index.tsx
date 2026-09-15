@@ -86,12 +86,14 @@ function Home() {
         {query ? (
           <div className="mt-3 max-w-4xl overflow-hidden rounded-lg border border-border bg-card">
             {results.length ? (
-              results.slice(0, 48).map((m, i) => (
-                <FixtureRow
-                  key={`${m.home}-${m.away}-${m.date}-${m.time ?? ""}-${m.source ?? ""}-${m.sourceId ?? i}`}
-                  fixture={m}
-                />
-              ))
+              results
+                .slice(0, 48)
+                .map((m, i) => (
+                  <FixtureRow
+                    key={`${m.home}-${m.away}-${m.date}-${m.time ?? ""}-${m.source ?? ""}-${m.sourceId ?? i}`}
+                    fixture={m}
+                  />
+                ))
             ) : (
               <div className="p-5 text-sm text-muted-foreground">
                 No fixture found yet in the connected public sources. Try the full team name.
@@ -118,7 +120,9 @@ function Home() {
                       <div className="label-xs text-primary">{day.label}</div>
                       <div className="mt-0.5 text-sm text-muted-foreground">{day.date}</div>
                     </div>
-                    <div className="text-xs text-muted-foreground">{day.matches.length} matches</div>
+                    <div className="text-xs text-muted-foreground">
+                      {day.matches.length} matches
+                    </div>
                   </div>
                   {day.matches.length ? (
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -190,7 +194,8 @@ function FixtureRow({
           {fixture.home} <span className="text-muted-foreground">vs</span> {fixture.away}
         </div>
         <div className="label-xs mt-1">
-          {fixture.league ?? "Worldwide Football"} · {time ? `${time} EAT` : fixture.date} · {fixture.source ?? "public"}
+          {fixture.league ?? "Worldwide Football"} · {time ? `${time} EAT` : fixture.date} ·{" "}
+          {fixture.source ?? "public"}
         </div>
       </div>
       <ArrowRight className="size-4 text-muted-foreground" />

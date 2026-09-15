@@ -2,7 +2,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { loadFreeFixtures, type FreeLeague, type MatchRow } from "./intelligence";
 import { canonicalCompetitionName, canonicalTeamKey } from "./identity";
 import { mineLivingReservoir } from "./living-reservoir";
-import { runBatchAnalysis as runBaseBatchAnalysis, type BatchAnalysisResponse } from "./batch-analysis";
+import {
+  runBatchAnalysis as runBaseBatchAnalysis,
+  type BatchAnalysisResponse,
+} from "./batch-analysis";
 
 function dateKey(value: string) {
   const m = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
@@ -20,7 +23,12 @@ function uniqueFixtures(groups: FreeLeague[]) {
   for (const group of groups) {
     for (const fixture of group.matches) {
       if (fixture.hg !== undefined || fixture.ag !== undefined) continue;
-      const row = { ...fixture, league: canonicalCompetitionName(group.league), code: group.code, season: group.season };
+      const row = {
+        ...fixture,
+        league: canonicalCompetitionName(group.league),
+        code: group.code,
+        season: group.season,
+      };
       const key = canonicalFixtureKey(row);
       const existing = unique.get(key);
       if (!existing) unique.set(key, row);
@@ -42,9 +50,14 @@ function dedupeSelections(result: BatchAnalysisResponse) {
 }
 
 export const runLivingBatchAnalysis = createServerFn({ method: "POST" })
-  .inputValidator((input: unknown) => input as { request?: string; limit?: number; includeUpcoming?: boolean })
+  .inputValidator(
+    (input: unknown) => input as { request?: string; limit?: number; includeUpcoming?: boolean },
+  )
   .handler(async ({ data }) => {
-    const requestedText = (data.request ?? (data.limit ? `Give me ${data.limit} safest picks` : "Predict today's next matches")).trim();
+    const requestedText = (
+      data.request ??
+      (data.limit ? `Give me ${data.limit} safest picks` : "Predict today's next matches")
+    ).trim();
     const requestedNumber = Number(requestedText.match(/\b(\d{1,2})\b/)?.[1] ?? 10);
     const overScan = Math.min(40, Math.max(requestedNumber * 3, requestedNumber + 10));
 
@@ -57,9 +70,10 @@ export const runLivingBatchAnalysis = createServerFn({ method: "POST" })
     await mineLivingReservoir(candidates, Math.min(12, candidates.length)).catch(() => undefined);
 
     // Overscan so deduplication never consumes the requested output count.
-    const baseRequest = requestedNumber > 0 && !/\b\d{1,2}\b/.test(requestedText)
-      ? `${requestedText} ${overScan}`
-      : requestedText.replace(/\b(\d{1,2})\b/, String(overScan));
+    const baseRequest =
+      requestedNumber > 0 && !/\b\d{1,2}\b/.test(requestedText)
+        ? `${requestedText} ${overScan}`
+        : requestedText.replace(/\b(\d{1,2})\b/, String(overScan));
     const base = await runBaseBatchAnalysis({ data: { ...data, request: baseRequest } });
     const clean = dedupeSelections(base);
     const finalSelections = clean.selections.slice(0, requestedNumber);

@@ -120,7 +120,12 @@ function parseIntent(raw: string): BatchIntent {
 }
 
 function fixtureId(fixture: MatchRow) {
-  return [dateKey(fixture.date), normalizeText(fixture.home), normalizeText(fixture.away), fixture.time ?? ""].join("|");
+  return [
+    dateKey(fixture.date),
+    normalizeText(fixture.home),
+    normalizeText(fixture.away),
+    fixture.time ?? "",
+  ].join("|");
 }
 
 function uniqueFixtures(groups: FreeLeague[]) {
@@ -136,10 +141,7 @@ function uniqueFixtures(groups: FreeLeague[]) {
   return [...unique.values()].sort((a, b) => kickoffValue(a).localeCompare(kickoffValue(b)));
 }
 
-function diversifyCandidates(
-  fixtures: ReturnType<typeof uniqueFixtures>,
-  limit: number,
-) {
+function diversifyCandidates(fixtures: ReturnType<typeof uniqueFixtures>, limit: number) {
   if (fixtures.length <= limit) return fixtures;
   const buckets = new Map<string, typeof fixtures>();
   for (const fixture of fixtures) {
@@ -160,7 +162,11 @@ function diversifyCandidates(
   return selected.sort((a, b) => kickoffValue(a).localeCompare(kickoffValue(b)));
 }
 
-async function mapConcurrent<T, R>(items: T[], workerCount: number, worker: (item: T) => Promise<R | undefined>) {
+async function mapConcurrent<T, R>(
+  items: T[],
+  workerCount: number,
+  worker: (item: T) => Promise<R | undefined>,
+) {
   const results: Array<R | undefined> = new Array(items.length);
   let cursor = 0;
   async function runWorker() {
@@ -178,7 +184,11 @@ async function mapConcurrent<T, R>(items: T[], workerCount: number, worker: (ite
   return results.filter((item): item is R => item !== undefined);
 }
 
-function exactMarketSignal(result: ServerMatchAnalysis, market: BatchIntent["market"], selection?: string) {
+function exactMarketSignal(
+  result: ServerMatchAnalysis,
+  market: BatchIntent["market"],
+  selection?: string,
+) {
   if (!market) return undefined;
   const map = buildMainstreamMarketMap(result);
   if (market === "BTTS" && selection) {
@@ -210,13 +220,23 @@ function exactMarketSignal(result: ServerMatchAnalysis, market: BatchIntent["mar
       rationale: `Totals model probability for ${selection} is ${(probability * 100).toFixed(1)}%.`,
     } satisfies MarketSignal;
   }
-  return map.filter((item) => item.market === market).sort((a, b) => b.probability - a.probability)[0];
+  return map
+    .filter((item) => item.market === market)
+    .sort((a, b) => b.probability - a.probability)[0];
 }
 
-function directOutcomeSignal(result: ServerMatchAnalysis, outcome: "HOME" | "AWAY" | "DRAW"): MarketSignal {
+function directOutcomeSignal(
+  result: ServerMatchAnalysis,
+  outcome: "HOME" | "AWAY" | "DRAW",
+): MarketSignal {
   const probs = result?.probabilities ?? { home: 0.33, draw: 0.34, away: 0.33 };
   const p = probs[outcome === "HOME" ? "home" : outcome === "AWAY" ? "away" : "draw"] ?? 0.33;
-  const label = outcome === "HOME" ? `${result?.home?.team ?? "Home"} WIN` : outcome === "AWAY" ? `${result?.away?.team ?? "Away"} WIN` : "DRAW";
+  const label =
+    outcome === "HOME"
+      ? `${result?.home?.team ?? "Home"} WIN`
+      : outcome === "AWAY"
+        ? `${result?.away?.team ?? "Away"} WIN`
+        : "DRAW";
   return {
     market: "1X2",
     selection: label,
@@ -229,11 +249,22 @@ function directOutcomeSignal(result: ServerMatchAnalysis, outcome: "HOME" | "AWA
 
 function qualifyMarket(result: ServerMatchAnalysis, signal: MarketSignal) {
   const probabilityFloor =
-    signal.market === "OVER/UNDER 1.5" ? 0.64 : signal.market === "DOUBLE CHANCE" ? 0.62 : signal.market === "DRAW NO BET" ? 0.6 : signal.market === "BTTS" ? 0.62 : 0.57;
+    signal.market === "OVER/UNDER 1.5"
+      ? 0.64
+      : signal.market === "DOUBLE CHANCE"
+        ? 0.62
+        : signal.market === "DRAW NO BET"
+          ? 0.6
+          : signal.market === "BTTS"
+            ? 0.62
+            : 0.57;
   const riskBlocked = result.risk === "VERY HIGH" || result.risk === "HIGH";
   const strongEvidence = result.quality >= 40 && result.robustness.score >= 45;
   const qualified = signal.probability >= probabilityFloor && strongEvidence && !riskBlocked;
-  const watch = signal.probability >= Math.max(0.5, probabilityFloor - 0.06) && result.quality >= 32 && result.robustness.score >= 32;
+  const watch =
+    signal.probability >= Math.max(0.5, probabilityFloor - 0.06) &&
+    result.quality >= 32 &&
+    result.robustness.score >= 32;
   return {
     qualified,
     watch,
@@ -245,15 +276,32 @@ function qualifyMarket(result: ServerMatchAnalysis, signal: MarketSignal) {
   };
 }
 
-function selectionScore(result: ServerMatchAnalysis, signal: MarketSignal, mode: BatchIntent["mode"]) {
-  const base = signal.probability * 0.48 + (result.confidence / 100) * 0.18 + (result.robustness.score / 100) * 0.16 + (result.quality / 100) * 0.12 + result.consensus.agreement * 0.06;
+function selectionScore(
+  result: ServerMatchAnalysis,
+  signal: MarketSignal,
+  mode: BatchIntent["mode"],
+) {
+  const base =
+    signal.probability * 0.48 +
+    (result.confidence / 100) * 0.18 +
+    (result.robustness.score / 100) * 0.16 +
+    (result.quality / 100) * 0.12 +
+    result.consensus.agreement * 0.06;
   const conflictPenalty = result.consensus.conflict * 0.18;
-  const modeBonus = mode === "SAFEST" && result.risk === "LOW" ? 0.06 : mode === "SAFEST" && result.risk === "MODERATE" ? 0.02 : mode === "SLIP" ? 0.02 : 0;
+  const modeBonus =
+    mode === "SAFEST" && result.risk === "LOW"
+      ? 0.06
+      : mode === "SAFEST" && result.risk === "MODERATE"
+        ? 0.02
+        : mode === "SLIP"
+          ? 0.02
+          : 0;
   return base + modeBonus - conflictPenalty;
 }
 
 function chooseMarket(result: ServerMatchAnalysis, intent: BatchIntent) {
-  if (intent.mode === "MARKET") return exactMarketSignal(result, intent.market, intent.marketSelection);
+  if (intent.mode === "MARKET")
+    return exactMarketSignal(result, intent.market, intent.marketSelection);
   if (intent.mode === "HOME") return directOutcomeSignal(result, "HOME");
   if (intent.mode === "AWAY") return directOutcomeSignal(result, "AWAY");
   if (intent.mode === "DRAW") return directOutcomeSignal(result, "DRAW");
@@ -269,9 +317,14 @@ function targetCandidates(fixtures: ReturnType<typeof uniqueFixtures>, intent: B
 }
 
 export const runBatchAnalysis = createServerFn({ method: "POST" })
-  .inputValidator((input: unknown) => input as { request?: string; limit?: number; includeUpcoming?: boolean })
+  .inputValidator(
+    (input: unknown) => input as { request?: string; limit?: number; includeUpcoming?: boolean },
+  )
   .handler(async ({ data }): Promise<BatchAnalysisResponse> => {
-    const request = (data.request ?? (data.limit ? `Give me ${data.limit} safest picks` : "Predict today's next matches")).trim();
+    const request = (
+      data.request ??
+      (data.limit ? `Give me ${data.limit} safest picks` : "Predict today's next matches")
+    ).trim();
     const intent = parseIntent(request);
     const groups = await loadFreeFixtures();
     const allCandidates = targetCandidates(uniqueFixtures(groups), intent);
@@ -283,7 +336,11 @@ export const runBatchAnalysis = createServerFn({ method: "POST" })
       const signal = chooseMarket(analysis, intent);
       if (!signal) return undefined;
       const gate = qualifyMarket(analysis, signal);
-      const status: BatchSelection["status"] = gate.qualified ? "QUALIFIED" : gate.watch ? "WATCH" : "NO QUALIFIED MARKET";
+      const status: BatchSelection["status"] = gate.qualified
+        ? "QUALIFIED"
+        : gate.watch
+          ? "WATCH"
+          : "NO QUALIFIED MARKET";
       return {
         fixture,
         analysis,
@@ -294,7 +351,9 @@ export const runBatchAnalysis = createServerFn({ method: "POST" })
       } satisfies BatchSelection;
     });
 
-    const qualified = analysed.filter((row) => row.status === "QUALIFIED").sort((a, b) => b.score - a.score);
+    const qualified = analysed
+      .filter((row) => row.status === "QUALIFIED")
+      .sort((a, b) => b.score - a.score);
     const selected: BatchSelection[] = [];
     const usedFixtures = new Set<string>();
     for (const row of qualified) {
@@ -306,9 +365,10 @@ export const runBatchAnalysis = createServerFn({ method: "POST" })
     }
 
     const generatedAt = new Date().toISOString();
-    const message = selected.length >= intent.count
-      ? `${selected.length} qualified selections returned after scanning a diversified ${analysed.length}-match analysis set.`
-      : `${intent.count} requested. ${selected.length} currently meet the qualification criteria after analysing ${analysed.length} of ${allCandidates.length} available candidates.`;
+    const message =
+      selected.length >= intent.count
+        ? `${selected.length} qualified selections returned after scanning a diversified ${analysed.length}-match analysis set.`
+        : `${intent.count} requested. ${selected.length} currently meet the qualification criteria after analysing ${analysed.length} of ${allCandidates.length} available candidates.`;
 
     return {
       request,

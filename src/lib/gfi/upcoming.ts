@@ -58,7 +58,9 @@ function relativeLabel(date: string, today: string) {
     weekday: "long",
     day: "2-digit",
     month: "short",
-  }).format(new Date(`${date}T12:00:00+03:00`)).toUpperCase();
+  })
+    .format(new Date(`${date}T12:00:00+03:00`))
+    .toUpperCase();
 }
 
 export function getUpcomingFixtures(all: FreeLeague[], limit = 18) {
@@ -70,7 +72,11 @@ export function getUpcomingFixtures(all: FreeLeague[], limit = 18) {
  * consumed the display limit. The home page uses these day buckets so marquee
  * fixtures such as cup ties remain discoverable.
  */
-export function getUpcomingFixturesByDay(all: FreeLeague[], days = 7, perDayLimit = 80): UpcomingDay[] {
+export function getUpcomingFixturesByDay(
+  all: FreeLeague[],
+  days = 7,
+  perDayLimit = 80,
+): UpcomingDay[] {
   const today = todayKenya();
   const end = addDaysKey(today, Math.max(0, days - 1));
   const now = Date.now();

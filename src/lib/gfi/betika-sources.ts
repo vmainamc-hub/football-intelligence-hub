@@ -9,7 +9,7 @@ export type BetikaFixture = MatchRow & {
 };
 
 const BETIKA_BASE = "https://www.betika.com/lite/en-ke/";
-const REQUEST_TIMEOUT_MS = 7_000;
+const REQUEST_TIMEOUT_MS = 12_000;
 const CACHE_TTL_MS = 5 * 60_000;
 
 type Cache = {
@@ -85,9 +85,21 @@ function parsePage(html: string, now = new Date()): BetikaFixture[] {
   const text = visibleText(html);
   const fixtures: BetikaFixture[] = [];
 
-  const fixturePattern = /([A-Za-z0-9À-ÿ][A-Za-z0-9À-ÿ .&'’()\/_-]{1,70}?)\s+vs\.?\s+([A-Za-z0-9À-ÿ][A-Za-z0-9À-ÿ .&'’()\/_-]{1,90}?)\s*\(\+\d+\)/gi;
-  const prefixPattern = /Soccer,\s*([^,]+),\s*([^0-9]{1,40}?)\s*(\d{1,2}\/\d{1,2})\s+(\d{1,2}:\d{2})\s+Soccer,/gi;
-  const prefixes: Array<{ index: number; league: string; country: string; date: string; time: string }> = [];
+  // Betika's Lite pages expose each football event as a visible "TEAM vs. TEAM
+  // (+markets)" anchor, preceded by its competition and kickoff. We parse the
+  // fixture identity from that stable public representation rather than using
+  // bookmaker odds as prediction input.
+  const fixturePattern =
+    /([A-Za-z0-9À-ÿ][A-Za-z0-9À-ÿ .&'’()/_-]{1,70}?)\s+vs\.?\s+([A-Za-z0-9À-ÿ][A-Za-z0-9À-ÿ .&'’()/_-]{1,90}?)\s*\(\+\d+\)/gi;
+  const prefixPattern =
+    /Soccer,\s*([^,]+),\s*([^0-9]{1,40}?)\s*(\d{1,2}\/\d{1,2})\s+(\d{1,2}:\d{2})\s+Soccer,/gi;
+  const prefixes: Array<{
+    index: number;
+    league: string;
+    country: string;
+    date: string;
+    time: string;
+  }> = [];
   for (const match of text.matchAll(prefixPattern)) {
     prefixes.push({
       index: match.index ?? 0,
@@ -100,7 +112,9 @@ function parsePage(html: string, now = new Date()): BetikaFixture[] {
 
   for (const match of text.matchAll(fixturePattern)) {
     const index = match.index ?? 0;
-    const prefix = [...prefixes].reverse().find((entry) => entry.index <= index && index - entry.index < 1400);
+    const prefix = [...prefixes]
+      .reverse()
+      .find((entry) => entry.index <= index && index - entry.index < 1400);
     if (!prefix) continue;
     const home = cleanTeam(match[1] ?? "");
     const away = cleanTeam(match[2] ?? "");
@@ -132,10 +146,9 @@ function parsePage(html: string, now = new Date()): BetikaFixture[] {
 async function fetchBetikaPages(maxPages = 8) {
   const pages = Array.from({ length: maxPages }, (_, i) => i + 1);
   const results: BetikaFixture[] = [];
-  const concurrency = 4;
-  for (let start = 0; start < pages.length; start += concurrency) {
+  for (let start = 0; start < pages.length; start += 3) {
     const batch = await Promise.allSettled(
-      pages.slice(start, start + concurrency).map(async (page) => {
+      pages.slice(start, start + 3).map(async (page) => {
         const separator = page === 1 ? "?ck=1" : `?page=${page}&ck=1`;
         const response = await withTimeout(`${BETIKA_BASE}${separator}`);
         if (!response.ok) throw new Error(`Betika HTTP ${response.status}`);
@@ -153,17 +166,12 @@ export const fetchBetikaFixtures = createServerFn({ method: "GET" })
     const key = `${data.dateFrom}|${data.dateTo}`;
     if (cache && cache.key === key && cache.expiresAt > Date.now()) return cache.fixtures;
 
-    try {
-      const fixtures = await fetchBetikaPages();
-      const filtered = fixtures.filter((fixture) => fixture.date >= data.dateFrom && fixture.date <= data.dateTo);
-      cache = { key, fixtures: filtered, expiresAt: Date.now() + CACHE_TTL_MS };
-      return filtered;
-    } catch {
-      // Betika is an enrichment source, never a single point of failure for
-      // global discovery. Other sources must still populate the fixture universe.
-      cache = { key, fixtures: [], expiresAt: Date.now() + 60_000 };
-      return [];
-    }
+    const fixtures = await fetchBetikaPages();
+    const filtered = fixtures.filter(
+      (fixture) => fixture.date >= data.dateFrom && fixture.date <= data.dateTo,
+    );
+    cache = { key, fixtures: filtered, expiresAt: Date.now() + CACHE_TTL_MS };
+    return filtered;
   });
 
 export { parsePage as parseBetikaHtml };

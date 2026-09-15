@@ -9,13 +9,15 @@ import { searchUniversalFixtures } from "./universal-sources";
 import type { MatchRow } from "./intelligence";
 
 function env(name: string) {
-  return typeof process === "undefined" ? "" : process.env[name] ?? "";
+  return typeof process === "undefined" ? "" : (process.env[name] ?? "");
 }
 
 function admin(): SupabaseClient | null {
   const url = env("SUPABASE_URL");
   const key = env("SUPABASE_SERVICE_ROLE_KEY") || env("SUPABASE_SECRET_KEY");
-  return url && key ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+  return url && key
+    ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
+    : null;
 }
 
 function dateKey(value: string) {
@@ -32,7 +34,9 @@ function hash(value: string) {
 }
 
 function key(match: MatchRow) {
-  return hash(`${dateKey(match.date)}|${canonicalTeamKey(match.home)}|${canonicalTeamKey(match.away)}`);
+  return hash(
+    `${dateKey(match.date)}|${canonicalTeamKey(match.home)}|${canonicalTeamKey(match.away)}`,
+  );
 }
 
 function pct(value: number) {
@@ -62,14 +66,19 @@ function aggregate(teamName: string, matches: ReservoirMatch[], homeAway?: "HOME
   const teamKey = canonicalTeamKey(teamName);
   const ordered = matches
     .filter((m) => {
-      if (canonicalTeamKey(m.home) !== teamKey && canonicalTeamKey(m.away) !== teamKey) return false;
+      if (canonicalTeamKey(m.home) !== teamKey && canonicalTeamKey(m.away) !== teamKey)
+        return false;
       if (homeAway === "HOME" && canonicalTeamKey(m.home) !== teamKey) return false;
       if (homeAway === "AWAY" && canonicalTeamKey(m.away) !== teamKey) return false;
       return m.hg !== undefined && m.ag !== undefined;
     })
-    .sort((a, b) => `${dateKey(b.date)}|${b.time ?? ""}`.localeCompare(`${dateKey(a.date)}|${a.time ?? ""}`));
+    .sort((a, b) =>
+      `${dateKey(b.date)}|${b.time ?? ""}`.localeCompare(`${dateKey(a.date)}|${a.time ?? ""}`),
+    );
   const recent = ordered.slice(0, 20);
-  const values = recent.map((m) => resultForTeam(m, teamKey)).filter(Boolean) as NonNullable<ReturnType<typeof resultForTeam>>[];
+  const values = recent.map((m) => resultForTeam(m, teamKey)).filter(Boolean) as NonNullable<
+    ReturnType<typeof resultForTeam>
+  >[];
   const n = values.length || 1;
   const gf = values.reduce((s, x) => s + x.gf, 0);
   const ga = values.reduce((s, x) => s + x.ga, 0);
@@ -95,31 +104,44 @@ function h2hRows(home: string, away: string, matches: ReservoirMatch[]) {
   const hk = canonicalTeamKey(home);
   const ak = canonicalTeamKey(away);
   return matches
-    .filter((m) =>
-      (canonicalTeamKey(m.home) === hk && canonicalTeamKey(m.away) === ak) ||
-      (canonicalTeamKey(m.home) === ak && canonicalTeamKey(m.away) === hk),
+    .filter(
+      (m) =>
+        (canonicalTeamKey(m.home) === hk && canonicalTeamKey(m.away) === ak) ||
+        (canonicalTeamKey(m.home) === ak && canonicalTeamKey(m.away) === hk),
     )
     .filter((m) => m.hg !== undefined && m.ag !== undefined)
     .sort((a, b) => dateKey(b.date).localeCompare(dateKey(a.date)))
     .slice(0, 20);
 }
 
-async function writeObservation(db: SupabaseClient, source: string, dataset: string, entityType: string, entityKey: string, payload: unknown, quality: number) {
+async function writeObservation(
+  db: SupabaseClient,
+  source: string,
+  dataset: string,
+  entityType: string,
+  entityKey: string,
+  payload: unknown,
+  quality: number,
+) {
   const content = JSON.stringify(payload);
   let hashValue = 2166136261;
-  for (let i = 0; i < content.length; i += 1) hashValue = Math.imul(hashValue ^ content.charCodeAt(i), 16777619);
-  await db.from("source_observations").upsert({
-    source,
-    source_family: source === "deep-miner" ? "derived-intelligence" : "public-research",
-    source_record_id: `${source}-${dataset}-${entityType}-${entityKey}`.slice(0, 220),
-    dataset,
-    entity_type: entityType,
-    entity_key: entityKey,
-    payload,
-    content_hash: (hashValue >>> 0).toString(16),
-    quality,
-    observed_at: new Date().toISOString(),
-  }, { onConflict: "source,dataset,source_record_id,entity_type,entity_key" });
+  for (let i = 0; i < content.length; i += 1)
+    hashValue = Math.imul(hashValue ^ content.charCodeAt(i), 16777619);
+  await db.from("source_observations").upsert(
+    {
+      source,
+      source_family: source === "deep-miner" ? "derived-intelligence" : "public-research",
+      source_record_id: `${source}-${dataset}-${entityType}-${entityKey}`.slice(0, 220),
+      dataset,
+      entity_type: entityType,
+      entity_key: entityKey,
+      payload,
+      content_hash: (hashValue >>> 0).toString(16),
+      quality,
+      observed_at: new Date().toISOString(),
+    },
+    { onConflict: "source,dataset,source_record_id,entity_type,entity_key" },
+  );
 }
 
 function uniqueRows(rows: MatchRow[]) {
@@ -163,13 +185,15 @@ async function collectDeepPublicEvidence(home: string, away: string, fixtureDate
     safeRows(searchUniversalFixtures({ data: { query: `${home} vs ${away}` } })),
     safeRows(fetchEspnFixtures(from, to)),
   ]);
-  const relevant = uniqueRows([...global, ...universal, ...espn].filter((row) => {
-    const h = canonicalTeamKey(row.home);
-    const a = canonicalTeamKey(row.away);
-    const hk = canonicalTeamKey(home);
-    const ak = canonicalTeamKey(away);
-    return h === hk || a === hk || h === ak || a === ak;
-  }));
+  const relevant = uniqueRows(
+    [...global, ...universal, ...espn].filter((row) => {
+      const h = canonicalTeamKey(row.home);
+      const a = canonicalTeamKey(row.away);
+      const hk = canonicalTeamKey(home);
+      const ak = canonicalTeamKey(away);
+      return h === hk || a === hk || h === ak || a === ak;
+    }),
+  );
   const byFamily = new Map<string, MatchRow[]>();
   for (const row of relevant) {
     const family = sourceFamily(row.source);
@@ -191,18 +215,24 @@ async function mineMatch(db: SupabaseClient, fixture: MatchRow) {
     collectDeepPublicEvidence(home, away, dateKey(fixture.date)),
   ]);
   const merged = new Map<string, ReservoirMatch>();
-  for (const row of [...homeHistory, ...awayHistory]) merged.set(`${row.date}|${row.home}|${row.away}|${row.time ?? ""}|${row.hg ?? ""}|${row.ag ?? ""}`, row);
+  for (const row of [...homeHistory, ...awayHistory])
+    merged.set(
+      `${row.date}|${row.home}|${row.away}|${row.time ?? ""}|${row.hg ?? ""}|${row.ag ?? ""}`,
+      row,
+    );
   const history = uniqueRows([...merged.values()]);
   const h2h = h2hRows(home, away, history as ReservoirMatch[]);
   const homeAll = aggregate(home, history as ReservoirMatch[]);
   const awayAll = aggregate(away, history as ReservoirMatch[]);
   const homeHome = aggregate(home, history as ReservoirMatch[], "HOME");
   const awayAway = aggregate(away, history as ReservoirMatch[], "AWAY");
-  const sourceFamilies = [...new Set([
-    ...history.map((r) => sourceFamily(r.source)),
-    ...(research?.sources ?? []).map(sourceFamily),
-    ...[...publicEvidence.byFamily.keys()],
-  ])];
+  const sourceFamilies = [
+    ...new Set([
+      ...history.map((r) => sourceFamily(r.source)),
+      ...(research?.sources ?? []).map(sourceFamily),
+      ...[...publicEvidence.byFamily.keys()],
+    ]),
+  ];
   const sourceFamilyCounts = Object.fromEntries(
     sourceFamilies.map((family) => [
       family,
@@ -211,49 +241,81 @@ async function mineMatch(db: SupabaseClient, fixture: MatchRow) {
         (publicEvidence.byFamily.get(family)?.length ?? 0),
     ]),
   );
-  const publicRows = publicEvidence.rows.filter((row) => row.hg !== undefined && row.ag !== undefined);
-  const evidenceCount = history.length + publicEvidence.rows.length + (research?.matches.length ?? 0) + h2h.length;
-  const completeness = Math.min(100, Math.round(
-    Math.min(35, history.length / 12) +
-    Math.min(15, h2h.length * 1.5) +
-    Math.min(25, sourceFamilies.length * 5) +
-    Math.min(25, (research?.coverage ?? 0) * 0.25),
-  ));
+  const publicRows = publicEvidence.rows.filter(
+    (row) => row.hg !== undefined && row.ag !== undefined,
+  );
+  const evidenceCount =
+    history.length + publicEvidence.rows.length + (research?.matches.length ?? 0) + h2h.length;
+  const completeness = Math.min(
+    100,
+    Math.round(
+      Math.min(35, history.length / 12) +
+        Math.min(15, h2h.length * 1.5) +
+        Math.min(25, sourceFamilies.length * 5) +
+        Math.min(25, (research?.coverage ?? 0) * 0.25),
+    ),
+  );
   const now = new Date().toISOString();
-  await db.from("match_intelligence_cells").upsert({
-    match_key: matchKey,
-    home_team_key: canonicalTeamKey(home),
-    away_team_key: canonicalTeamKey(away),
-    home_team_name: home,
-    away_team_name: away,
-    competition: canonicalCompetitionName(fixture.league),
-    kickoff: fixture.time ? `${dateKey(fixture.date)}T${fixture.time.slice(0,5)}:00Z` : `${dateKey(fixture.date)}T12:00:00Z`,
-    observed_at: now,
-    last_mined_at: now,
-    next_mine_at: new Date(Date.now() + 30 * 60_000).toISOString(),
-    evidence_count: evidenceCount,
-    source_count: sourceFamilies.length,
-    completeness,
-    status: "ACTIVE",
-    summary: {
+  await db.from("match_intelligence_cells").upsert(
+    {
+      match_key: matchKey,
+      home_team_key: canonicalTeamKey(home),
+      away_team_key: canonicalTeamKey(away),
+      home_team_name: home,
+      away_team_name: away,
+      competition: canonicalCompetitionName(fixture.league),
+      kickoff: fixture.time
+        ? `${dateKey(fixture.date)}T${fixture.time.slice(0, 5)}:00Z`
+        : `${dateKey(fixture.date)}T12:00:00Z`,
+      observed_at: now,
+      last_mined_at: now,
+      next_mine_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+      evidence_count: evidenceCount,
+      source_count: sourceFamilies.length,
+      completeness,
+      status: "ACTIVE",
+      summary: {
+        fixture: { ...fixture, home, away },
+        historicalRows: history.slice(-120),
+        h2h: h2h.slice(0, 20),
+        home: homeAll,
+        away: awayAll,
+        homeVenue: homeHome,
+        awayVenue: awayAway,
+        publicRows: publicRows.slice(-120),
+        sourceFamilies,
+        sourceFamilyCounts,
+        publicResearch: {
+          matches: research?.matches.length ?? 0,
+          sources: research?.sources ?? [],
+          coverage: research?.coverage ?? 0,
+        },
+        minedAt: now,
+      },
+      updated_at: now,
+    },
+    { onConflict: "match_key" },
+  );
+  await writeObservation(
+    db,
+    "deep-miner",
+    "deep-match-context",
+    "match",
+    matchKey,
+    {
       fixture: { ...fixture, home, away },
-      historicalRows: history.slice(-120),
-      h2h: h2h.slice(0, 20),
+      history: history.slice(-120),
+      publicRows: publicRows.slice(-120),
       home: homeAll,
       away: awayAll,
       homeVenue: homeHome,
       awayVenue: awayAway,
-      publicRows: publicRows.slice(-120),
-      sourceFamilies,
+      h2h: h2h.slice(0, 20),
+      sources: sourceFamilies,
       sourceFamilyCounts,
-      publicResearch: { matches: research?.matches.length ?? 0, sources: research?.sources ?? [], coverage: research?.coverage ?? 0 },
-      minedAt: now,
     },
-    updated_at: now,
-  }, { onConflict: "match_key" });
-  await writeObservation(db, "deep-miner", "deep-match-context", "match", matchKey, {
-    fixture: { ...fixture, home, away }, history: history.slice(-120), publicRows: publicRows.slice(-120), home: homeAll, away: awayAll, homeVenue: homeHome, awayVenue: awayAway, h2h: h2h.slice(0, 20), sources: sourceFamilies, sourceFamilyCounts,
-  }, Math.max(0.55, completeness / 100));
+    Math.max(0.55, completeness / 100),
+  );
   return { key: matchKey, evidence: evidenceCount, sources: sourceFamilies.length, completeness };
 }
 
@@ -264,36 +326,95 @@ async function mineTeam(db: SupabaseClient, teamName: string) {
   const all = aggregate(name, history);
   const home = aggregate(name, history, "HOME");
   const away = aggregate(name, history, "AWAY");
-  const competitions = [...new Map(history.map((m) => [canonicalCompetitionName(m.league), m])).values()].slice(0, 40).map((m) => canonicalCompetitionName(m.league));
+  const competitions = [
+    ...new Map(history.map((m) => [canonicalCompetitionName(m.league), m])).values(),
+  ]
+    .slice(0, 40)
+    .map((m) => canonicalCompetitionName(m.league));
   const sources = [...new Set(history.map((m) => sourceFamily(m.source)))];
   const now = new Date().toISOString();
-  const completeness = Math.min(100, Math.round(Math.min(60, history.length / 10) + Math.min(20, competitions.length * 2) + Math.min(20, all.sample * 0.5)));
-  await db.from("team_intelligence_cells").upsert({
-    team_key: teamKey,
-    team_name: name,
-    observed_at: now,
-    last_mined_at: now,
-    evidence_count: history.length,
-    source_count: sources.length,
-    completeness,
-    status: "ACTIVE",
-    summary: { team: name, recentRows: history.slice(-120), all, home, away, competitions, sourceFamilies: sources, minedAt: now },
-    updated_at: now,
-  }, { onConflict: "team_key" });
-  await writeObservation(db, "deep-miner", "deep-team-context", "team", teamKey, { team: name, recentRows: history.slice(-120), all, home, away, competitions, sourceFamilies: sources }, Math.max(0.55, completeness / 100));
+  const completeness = Math.min(
+    100,
+    Math.round(
+      Math.min(60, history.length / 10) +
+        Math.min(20, competitions.length * 2) +
+        Math.min(20, all.sample * 0.5),
+    ),
+  );
+  await db.from("team_intelligence_cells").upsert(
+    {
+      team_key: teamKey,
+      team_name: name,
+      observed_at: now,
+      last_mined_at: now,
+      evidence_count: history.length,
+      source_count: sources.length,
+      completeness,
+      status: "ACTIVE",
+      summary: {
+        team: name,
+        recentRows: history.slice(-120),
+        all,
+        home,
+        away,
+        competitions,
+        sourceFamilies: sources,
+        minedAt: now,
+      },
+      updated_at: now,
+    },
+    { onConflict: "team_key" },
+  );
+  await writeObservation(
+    db,
+    "deep-miner",
+    "deep-team-context",
+    "team",
+    teamKey,
+    {
+      team: name,
+      recentRows: history.slice(-120),
+      all,
+      home,
+      away,
+      competitions,
+      sourceFamilies: sources,
+    },
+    Math.max(0.55, completeness / 100),
+  );
   return { key: teamKey, evidence: history.length, completeness };
 }
 
-export async function runDeepEvidenceMining(options?: { matchBudget?: number; teamBudget?: number }) {
+export async function runDeepEvidenceMining(options?: {
+  matchBudget?: number;
+  teamBudget?: number;
+}) {
   const db = admin();
   if (!db) return { configured: false, processedMatches: 0, processedTeams: 0, evidence: 0 };
   const matchBudget = Math.min(40, Math.max(1, options?.matchBudget ?? 20));
   const teamBudget = Math.min(40, Math.max(1, options?.teamBudget ?? 30));
   const nowIso = new Date().toISOString();
-  const run = await db.from("evidence_mining_runs").insert({ run_type: "DEEP_EVIDENCE_CYCLE", requested_count: matchBudget + teamBudget, started_at: nowIso, status: "RUNNING", detail: { matchBudget, teamBudget } }).select("id").maybeSingle();
-  const due = await db.from("match_intelligence_cells").select("match_key,home_team_name,away_team_name,competition,kickoff").or(`next_mine_at.is.null,next_mine_at.lte.${nowIso},evidence_count.lt.20`).order("next_mine_at", { ascending: true }).limit(matchBudget);
+  const run = await db
+    .from("evidence_mining_runs")
+    .insert({
+      run_type: "DEEP_EVIDENCE_CYCLE",
+      requested_count: matchBudget + teamBudget,
+      started_at: nowIso,
+      status: "RUNNING",
+      detail: { matchBudget, teamBudget },
+    })
+    .select("id")
+    .maybeSingle();
+  const due = await db
+    .from("match_intelligence_cells")
+    .select("match_key,home_team_name,away_team_name,competition,kickoff")
+    .or(`next_mine_at.is.null,next_mine_at.lte.${nowIso},evidence_count.lt.20`)
+    .order("next_mine_at", { ascending: true })
+    .limit(matchBudget);
   const selectedMatches = due.data ?? [];
-  let processedMatches = 0, processedTeams = 0, evidence = 0;
+  let processedMatches = 0,
+    processedTeams = 0,
+    evidence = 0;
   const teams = new Set<string>();
   for (const row of selectedMatches) {
     const fixture: MatchRow = {
@@ -311,12 +432,30 @@ export async function runDeepEvidenceMining(options?: { matchBudget?: number; te
       teams.add(row.away_team_name);
     }
   }
-  const dueTeams = await db.from("team_intelligence_cells").select("team_name,evidence_count,last_mined_at").or(`last_mined_at.is.null,last_mined_at.lte.${nowIso},evidence_count.lt.8`).order("last_mined_at", { ascending: true }).limit(teamBudget);
+  const dueTeams = await db
+    .from("team_intelligence_cells")
+    .select("team_name,evidence_count,last_mined_at")
+    .or(`last_mined_at.is.null,last_mined_at.lte.${nowIso},evidence_count.lt.8`)
+    .order("last_mined_at", { ascending: true })
+    .limit(teamBudget);
   for (const row of dueTeams.data ?? []) {
     const result = await mineTeam(db, row.team_name).catch(() => undefined);
-    if (result) { processedTeams += 1; evidence += result.evidence; }
+    if (result) {
+      processedTeams += 1;
+      evidence += result.evidence;
+    }
   }
-  if (run.data?.id) await db.from("evidence_mining_runs").update({ processed_count: processedMatches + processedTeams, evidence_found: evidence, finished_at: new Date().toISOString(), status: "SUCCESS", detail: { matchBudget, teamBudget, processedMatches, processedTeams } }).eq("id", run.data.id);
+  if (run.data?.id)
+    await db
+      .from("evidence_mining_runs")
+      .update({
+        processed_count: processedMatches + processedTeams,
+        evidence_found: evidence,
+        finished_at: new Date().toISOString(),
+        status: "SUCCESS",
+        detail: { matchBudget, teamBudget, processedMatches, processedTeams },
+      })
+      .eq("id", run.data.id);
   return { configured: true, processedMatches, processedTeams, evidence };
 }
 

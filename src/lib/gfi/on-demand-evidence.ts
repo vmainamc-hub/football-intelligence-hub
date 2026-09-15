@@ -10,7 +10,9 @@ function hash(value: string) {
 }
 
 function matchKey(fixture: MatchRow) {
-  return hash(`${fixture.date.slice(0, 10)}|${canonicalTeamKey(fixture.home)}|${canonicalTeamKey(fixture.away)}`);
+  return hash(
+    `${fixture.date.slice(0, 10)}|${canonicalTeamKey(fixture.home)}|${canonicalTeamKey(fixture.away)}`,
+  );
 }
 
 /**

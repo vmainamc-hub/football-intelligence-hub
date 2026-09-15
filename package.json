@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev --host 0.0.0.0 --port 3000",
-    "build": "vite build",
+    "build": "vite build && node --input-type=module -e \"import fs from 'node:fs'; if (fs.existsSync('.output/public')) fs.cpSync('.output/public', 'dist', { recursive: true });\"",
+    "start": "node run.js",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "test": "tsx --test src/lib/gfi/__tests__/*.test.ts",

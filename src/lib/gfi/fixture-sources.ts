@@ -13,7 +13,7 @@ export type ExternalFixture = MatchRow & {
 
 const OPENFOOTBALL_BASE = "https://raw.githubusercontent.com/openfootball/football.json/master";
 const SPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3";
-const REQUEST_TIMEOUT_MS = 7_000;
+const REQUEST_TIMEOUT_MS = 10_000;
 
 const OPENFOOTBALL_LEAGUES: Array<{ code: string; league: string; file: string }> = [
   { code: "E0", league: "Premier League", file: "2026-27/en.1.json" },
@@ -57,23 +57,29 @@ function parseOpenFootball(payload: unknown, league: string, sourceUrl: string):
     const home = typeof item.team1 === "string" ? item.team1 : "";
     const away = typeof item.team2 === "string" ? item.team2 : "";
     if (!date || !home || !away) return [];
-    const score = item.score && typeof item.score === "object" ? (item.score as Record<string, unknown>) : undefined;
+    const score =
+      item.score && typeof item.score === "object"
+        ? (item.score as Record<string, unknown>)
+        : undefined;
     const ft = Array.isArray(score?.ft) ? (score.ft as unknown[]) : [];
     const hg = typeof ft[0] === "number" ? ft[0] : undefined;
     const ag = typeof ft[1] === "number" ? ft[1] : undefined;
-    return [{
-      date: sourceDateKey(date),
-      time: typeof item.time === "string" ? item.time.slice(0, 5) : undefined,
-      home: canonicalTeamName(home),
-      away: canonicalTeamName(away),
-      hg,
-      ag,
-      result: hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
-      league: canonicalCompetitionName(league),
-      source: "openfootball",
-      sourceId: `${sourceUrl}#${index}`,
-      sourceUpdatedAt: new Date().toISOString(),
-    } satisfies ExternalFixture];
+    return [
+      {
+        date: sourceDateKey(date),
+        time: typeof item.time === "string" ? item.time.slice(0, 5) : undefined,
+        home: canonicalTeamName(home),
+        away: canonicalTeamName(away),
+        hg,
+        ag,
+        result:
+          hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
+        league: canonicalCompetitionName(league),
+        source: "openfootball",
+        sourceId: `${sourceUrl}#${index}`,
+        sourceUpdatedAt: new Date().toISOString(),
+      } satisfies ExternalFixture,
+    ];
   });
 }
 
@@ -89,33 +95,53 @@ function parseSportsDb(payload: unknown): ExternalFixture[] {
     const away = typeof item.strAwayTeam === "string" ? item.strAwayTeam : "";
     const date = typeof item.dateEvent === "string" ? item.dateEvent : "";
     if (!home || !away || !date) return [];
-    const hg = typeof item.intHomeScore === "number" ? item.intHomeScore : parseScoreCell(typeof item.intHomeScore === "string" ? item.intHomeScore : undefined);
-    const ag = typeof item.intAwayScore === "number" ? item.intAwayScore : parseScoreCell(typeof item.intAwayScore === "string" ? item.intAwayScore : undefined);
-    return [{
-      date: sourceDateKey(date),
-      time: typeof item.strTime === "string" ? item.strTime.slice(0, 5) : undefined,
-      home: canonicalTeamName(home),
-      away: canonicalTeamName(away),
-      hg,
-      ag,
-      result: hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
-      league: canonicalCompetitionName(typeof item.strLeague === "string" ? item.strLeague : "Worldwide Football"),
-      source: "sportsdb",
-      sourceId: String(item.idEvent ?? index),
-      sourceUpdatedAt: new Date().toISOString(),
-    } satisfies ExternalFixture];
+    const hg =
+      typeof item.intHomeScore === "number"
+        ? item.intHomeScore
+        : parseScoreCell(typeof item.intHomeScore === "string" ? item.intHomeScore : undefined);
+    const ag =
+      typeof item.intAwayScore === "number"
+        ? item.intAwayScore
+        : parseScoreCell(typeof item.intAwayScore === "string" ? item.intAwayScore : undefined);
+    return [
+      {
+        date: sourceDateKey(date),
+        time: typeof item.strTime === "string" ? item.strTime.slice(0, 5) : undefined,
+        home: canonicalTeamName(home),
+        away: canonicalTeamName(away),
+        hg,
+        ag,
+        result:
+          hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
+        league: canonicalCompetitionName(
+          typeof item.strLeague === "string" ? item.strLeague : "Worldwide Football",
+        ),
+        source: "sportsdb",
+        sourceId: String(item.idEvent ?? index),
+        sourceUpdatedAt: new Date().toISOString(),
+      } satisfies ExternalFixture,
+    ];
   });
 }
 
 async function collectSportsDb(from: string, to: string) {
-  const days = Math.max(1, Math.min(14, Math.floor((Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 86_400_000) + 1));
+  const days = Math.max(
+    1,
+    Math.min(
+      14,
+      Math.floor((Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 86_400_000) +
+        1,
+    ),
+  );
   const out: ExternalFixture[] = [];
-  const concurrency = 6;
+  const concurrency = 3;
   for (let start = 0; start < days; start += concurrency) {
     const batch = await Promise.allSettled(
       Array.from({ length: Math.min(concurrency, days - start) }, (_, offset) => {
         const date = addDays(from, start + offset);
-        return withTimeout(`${SPORTSDB_BASE}/eventsday.php?d=${date}&s=Soccer`, { headers: { Accept: "application/json" } })
+        return withTimeout(`${SPORTSDB_BASE}/eventsday.php?d=${date}&s=Soccer`, {
+          headers: { Accept: "application/json" },
+        })
           .then(async (response) => (response.ok ? parseSportsDb(await response.json()) : []))
           .catch(() => [] as ExternalFixture[]);
       }),
@@ -125,41 +151,47 @@ async function collectSportsDb(from: string, to: string) {
   return out;
 }
 
-async function collectOpenFootball() {
-  const settled = await Promise.allSettled(
-    OPENFOOTBALL_LEAGUES.map(async (entry) => {
-      const response = await withTimeout(`${OPENFOOTBALL_BASE}/${entry.file}`, { headers: { Accept: "application/json" } });
-      if (!response.ok) return [] as ExternalFixture[];
-      return parseOpenFootball(await response.json(), entry.league, response.url || `${OPENFOOTBALL_BASE}/${entry.file}`);
-    }),
-  );
-  return settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
-}
-
 export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
   .validator((input: { dateFrom: string; dateTo: string }) => input)
   .handler(async ({ data }): Promise<ExternalFixture[]> => {
-    // Every public source is isolated. A blocked bookmaker, a slow calendar
-    // source, or a single failed competition must never collapse the entire
-    // global fixture universe back to the 12-league primary feed.
-    const [openfootball, betika, sportsDb, espn] = await Promise.allSettled([
-      collectOpenFootball(),
+    const results: ExternalFixture[] = [];
+    const openfootball = await Promise.allSettled(
+      OPENFOOTBALL_LEAGUES.map(async (entry) => {
+        const response = await withTimeout(`${OPENFOOTBALL_BASE}/${entry.file}`, {
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) throw new Error(`OpenFootball ${entry.file}: HTTP ${response.status}`);
+        return parseOpenFootball(
+          await response.json(),
+          entry.league,
+          response.url || `${OPENFOOTBALL_BASE}/${entry.file}`,
+        );
+      }),
+    );
+    for (const result of openfootball)
+      if (result.status === "fulfilled") results.push(...result.value);
+
+    const [betika, sportsDb, espn] = await Promise.all([
       fetchBetikaFixtures({ data: { dateFrom: data.dateFrom, dateTo: data.dateTo } }),
       collectSportsDb(data.dateFrom, data.dateTo),
       fetchEspnFixtures(data.dateFrom, data.dateTo),
     ]);
 
-    const results: ExternalFixture[] = [];
-    if (openfootball.status === "fulfilled") results.push(...openfootball.value);
-    if (betika.status === "fulfilled") results.push(...betika.value);
-    if (sportsDb.status === "fulfilled") results.push(...sportsDb.value);
-    if (espn.status === "fulfilled") {
-      results.push(...espn.value.map((m) => ({
-        ...m,
-        source: "espn" as const,
-        sourceUpdatedAt: new Date().toISOString(),
-      } satisfies ExternalFixture)));
-    }
+    // Betika is deliberately first so its current bookmaker fixture universe
+    // becomes the canonical display row when another source reports the same
+    // scheduled match. It is still never used as a prediction authority.
+    results.push(...betika);
+    results.push(...sportsDb);
+    results.push(
+      ...espn.map(
+        (m) =>
+          ({
+            ...m,
+            source: "espn" as const,
+            sourceUpdatedAt: new Date().toISOString(),
+          }) satisfies ExternalFixture,
+      ),
+    );
 
     const seen = new Set<string>();
     return results.filter((match) => {
