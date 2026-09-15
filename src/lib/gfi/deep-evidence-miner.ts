@@ -206,7 +206,7 @@ async function mineMatch(db: SupabaseClient, fixture: MatchRow) {
   const sourceFamilyCounts = Object.fromEntries(
     sourceFamilies.map((family) => [
       family,
-      (history.filter((r) => sourceFamily(r.source) === family).length) +
+      history.filter((r) => sourceFamily(r.source) === family).length +
         (research?.sources ?? []).filter((s) => sourceFamily(s) === family).length +
         (publicEvidence.byFamily.get(family)?.length ?? 0),
     ]),
@@ -252,16 +252,7 @@ async function mineMatch(db: SupabaseClient, fixture: MatchRow) {
     updated_at: now,
   }, { onConflict: "match_key" });
   await writeObservation(db, "deep-miner", "deep-match-context", "match", matchKey, {
-    fixture: { ...fixture, home, away },
-    history: history.slice(-120),
-    publicRows: publicRows.slice(-120),
-    home: homeAll,
-    away: awayAll,
-    homeVenue: homeHome,
-    awayVenue: awayAway,
-    h2h: h2h.slice(0, 20),
-    sources: sourceFamilies,
-    sourceFamilyCounts,
+    fixture: { ...fixture, home, away }, history: history.slice(-120), publicRows: publicRows.slice(-120), home: homeAll, away: awayAll, homeVenue: homeHome, awayVenue: awayAway, h2h: h2h.slice(0, 20), sources: sourceFamilies, sourceFamilyCounts,
   }, Math.max(0.55, completeness / 100));
   return { key: matchKey, evidence: evidenceCount, sources: sourceFamilies.length, completeness };
 }
@@ -286,16 +277,7 @@ async function mineTeam(db: SupabaseClient, teamName: string) {
     source_count: sources.length,
     completeness,
     status: "ACTIVE",
-    summary: {
-      team: name,
-      recentRows: history.slice(-120),
-      all,
-      home,
-      away,
-      competitions,
-      sourceFamilies: sources,
-      minedAt: now,
-    },
+    summary: { team: name, recentRows: history.slice(-120), all, home, away, competitions, sourceFamilies: sources, minedAt: now },
     updated_at: now,
   }, { onConflict: "team_key" });
   await writeObservation(db, "deep-miner", "deep-team-context", "team", teamKey, { team: name, recentRows: history.slice(-120), all, home, away, competitions, sourceFamilies: sources }, Math.max(0.55, completeness / 100));
@@ -309,7 +291,7 @@ export async function runDeepEvidenceMining(options?: { matchBudget?: number; te
   const teamBudget = Math.min(40, Math.max(1, options?.teamBudget ?? 30));
   const nowIso = new Date().toISOString();
   const run = await db.from("evidence_mining_runs").insert({ run_type: "DEEP_EVIDENCE_CYCLE", requested_count: matchBudget + teamBudget, started_at: nowIso, status: "RUNNING", detail: { matchBudget, teamBudget } }).select("id").maybeSingle();
-  const due = await db.from("match_intelligence_cells").select("match_key,home_team_name,away_team_name,competition,kickoff").or(`next_mine_at.is.null,next_mine_at.lte.${nowIso}`).order("next_mine_at", { ascending: true }).limit(matchBudget);
+  const due = await db.from("match_intelligence_cells").select("match_key,home_team_name,away_team_name,competition,kickoff").or(`next_mine_at.is.null,next_mine_at.lte.${nowIso},evidence_count.lt.20`).order("next_mine_at", { ascending: true }).limit(matchBudget);
   const selectedMatches = due.data ?? [];
   let processedMatches = 0, processedTeams = 0, evidence = 0;
   const teams = new Set<string>();
@@ -329,9 +311,9 @@ export async function runDeepEvidenceMining(options?: { matchBudget?: number; te
       teams.add(row.away_team_name);
     }
   }
-  const teamNames = [...teams].slice(0, teamBudget);
-  for (const name of teamNames) {
-    const result = await mineTeam(db, name).catch(() => undefined);
+  const dueTeams = await db.from("team_intelligence_cells").select("team_name,evidence_count,last_mined_at").or(`last_mined_at.is.null,last_mined_at.lte.${nowIso},evidence_count.lt.8`).order("last_mined_at", { ascending: true }).limit(teamBudget);
+  for (const row of dueTeams.data ?? []) {
+    const result = await mineTeam(db, row.team_name).catch(() => undefined);
     if (result) { processedTeams += 1; evidence += result.evidence; }
   }
   if (run.data?.id) await db.from("evidence_mining_runs").update({ processed_count: processedMatches + processedTeams, evidence_found: evidence, finished_at: new Date().toISOString(), status: "SUCCESS", detail: { matchBudget, teamBudget, processedMatches, processedTeams } }).eq("id", run.data.id);
