@@ -140,6 +140,7 @@ export async function runMatchAnalysis(
         source: "OPTIONAL_PROVIDER",
         provider: "Tavily / web",
         sourceFamily: "Tavily / web",
+        provenance: fact.sourceUrl || `https://${fact.sourceDomain}`,
         statement: `Web evidence (${fact.sourceDomain}): ${fact.title}`,
         quality: fact.factType === "score" ? 75 : 60,
       });

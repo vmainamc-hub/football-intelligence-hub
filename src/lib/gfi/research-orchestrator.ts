@@ -114,11 +114,17 @@ export async function performFixtureResearchInternal(queryRaw: string): Promise<
 
   if (internalHistoryCount < 8 && home && away) {
     try {
-      webEvidence = await acquireWebEvidence({
-        home,
-        away,
-        fixtureDate,
-      });
+      webEvidence = await Promise.race([
+        acquireWebEvidence({
+          home,
+          away,
+          fixtureDate,
+        }),
+        new Promise<undefined>((resolve) => {
+          const isolationTimer = setTimeout(() => resolve(undefined), 7_000);
+          isolationTimer.unref?.();
+        }),
+      ]);
       if (webEvidence && webEvidence.datedScoreRows.length > 0) {
         for (const r of webEvidence.datedScoreRows) {
           const key = identity(r);

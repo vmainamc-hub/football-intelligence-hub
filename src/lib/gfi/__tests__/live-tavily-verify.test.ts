@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { runMatchAnalysis } from "../match-analysis";
 
-test("Live Tavily sparse fixture production verification", async () => {
+test("Live Tavily sparse fixture production verification", async (t) => {
+  if (!process.env.TAVILY_API_KEY) {
+    t.skip("TAVILY_API_KEY not configured — skipping live Tavily API test");
+    return;
+  }
+
   const sparseFixture = {
     home: "Nairobi City Stars",
     away: "Bidco United",
