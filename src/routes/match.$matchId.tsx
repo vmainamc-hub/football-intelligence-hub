@@ -17,6 +17,11 @@ import {
 import { buildMatchReasoning } from "@/lib/gfi/reasoning";
 import { saveAuthoritativePrediction } from "@/lib/gfi/prediction-ledger";
 import { canonicalCompetitionName } from "@/lib/gfi/identity";
+import {
+  assertAuthoritativeResult,
+  renderPredictionOrUnavailable,
+  runtimeFingerprint,
+} from "@/lib/gfi/runtime-fingerprint";
 
 export const Route = createFileRoute("/match/$matchId")({ component: MatchIntelligence });
 type Fixture = MatchRow & { league: string; code: string; season: string };
@@ -47,10 +52,6 @@ function MatchIntelligence() {
   const parsed = useMemo(() => decodeFixture(matchId), [matchId]);
   const [saved, setSaved] = useState(false);
 
-  // The route already carries the fixture, so analysis starts immediately and is
-  // never blocked on the full fixture catalogue. The catalogue is only used to
-  // enrich labels, and the analysis query key stays tied to the route so a later
-  // catalogue load can never silently replace an already-delivered result.
   const fixture = useMemo<Fixture | undefined>(() => {
     if (!parsed.h || !parsed.a || !parsed.d) return undefined;
     return {
@@ -68,8 +69,13 @@ function MatchIntelligence() {
 
   const analysisQuery = useQuery({
     queryKey: ["authoritative-match", matchId],
-    queryFn: () =>
-      analyzeFreeMatch({ data: { code: fixture!.code ?? "GLOBAL", fixture: fixture! } }),
+    queryFn: async () => {
+      const analysis = await analyzeFreeMatch({
+        data: { code: fixture!.code ?? "GLOBAL", fixture: fixture! },
+      });
+      assertAuthoritativeResult(analysis);
+      return analysis;
+    },
     enabled: !!fixture,
     staleTime: 10 * 60_000,
   });
@@ -91,11 +97,11 @@ function MatchIntelligence() {
   if (analysisQuery.error && !result)
     return (
       <State
-        title="Analysis unavailable"
+        title="Authoritative analysis unavailable"
         text={
           analysisQuery.error instanceof Error
             ? analysisQuery.error.message
-            : "The authoritative analysis request failed."
+            : "The authoritative analysis contract could not be validated."
         }
         back
       />
@@ -118,6 +124,15 @@ function MatchIntelligence() {
   };
   const aiStatus = String(result.aiReasoningPacket?.aiStatus ?? "Deterministic model synthesis");
   const aiRole = String(result.aiReasoningPacket?.aiRole ?? "DETERMINISTIC_MULTI_MODEL_SYNTHESIS");
+  const serverFingerprint = result.aiReasoningPacket.runtimeFingerprint as
+    | typeof runtimeFingerprint
+    | undefined;
+  const displayBuildSha = serverFingerprint?.buildSha ?? runtimeFingerprint.buildSha;
+  const fingerprintMatch =
+    Boolean(serverFingerprint) &&
+    displayBuildSha !== "UNKNOWN_BUILD" &&
+    displayBuildSha === runtimeFingerprint.buildSha;
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-border bg-background/95 px-5 py-5 lg:px-10">
@@ -150,46 +165,65 @@ function MatchIntelligence() {
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-5 py-6 lg:px-10">
-        {/* Prominent Primary Deliverables */}
+        <section className="panel mb-6 p-4">
+          <div className="grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+            <HealthStat label="BUILD SHA" value={displayBuildSha} />
+            <HealthStat label="BUILD TIME" value={serverFingerprint?.buildTime ?? "UNKNOWN"} />
+            <HealthStat label="ANALYSIS" value={runtimeFingerprint.analysisVersion} />
+            <HealthStat
+              label="RUNTIME INTEGRITY"
+              value={fingerprintMatch ? "MATCHED AUTHORITATIVE RUNTIME" : "RUNTIME MISMATCH"}
+            />
+          </div>
+        </section>
+
         <section className="panel border-primary/40 p-6 shadow-sm">
           <div className="grid gap-6 md:grid-cols-3">
             <div className="border-b border-border pb-4 md:border-b-0 md:border-r md:pr-6">
               <div className="label-xs text-primary">BEST ACTIONABLE MARKET</div>
-              <h2 className="mt-2 text-2xl font-bold">{bestAction.selection}</h2>
+              <h2 className="mt-2 text-2xl font-bold">
+                {renderPredictionOrUnavailable(bestAction?.selection)}
+              </h2>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                 <span className="rounded bg-primary/10 px-2 py-0.5 font-semibold text-primary">
-                  {bestAction.market}
+                  {bestAction?.market ?? "UNAVAILABLE"}
                 </span>
                 <span className="font-semibold text-foreground">
-                  {Math.round(bestAction.probability * 100)}% probability
+                  {bestAction ? `${Math.round(bestAction.probability * 100)}% probability` : "No model output"}
                 </span>
-                <span className="text-muted-foreground">· {bestAction.confidence}% confidence</span>
+                {bestAction && (
+                  <span className="text-muted-foreground">· {bestAction.confidence}% confidence</span>
+                )}
               </div>
               <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                {bestAction.rationale}
+                {bestAction?.rationale ?? "The authoritative market object was not available."}
               </p>
             </div>
 
             <div className="border-b border-border pb-4 md:border-b-0 md:border-r md:pr-6">
               <div className="label-xs text-primary">AUTHORITATIVE 1X2 CALL</div>
-              <h2 className="mt-2 text-2xl font-bold">{oneX2.selection}</h2>
+              <h2 className="mt-2 text-2xl font-bold">
+                {renderPredictionOrUnavailable(oneX2?.selection)}
+              </h2>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                 <span className="rounded bg-muted px-2 py-0.5 font-medium">
                   Decision: {result.decision}
                 </span>
-                <span className="font-semibold text-foreground">
-                  {Math.round(oneX2.probability * 100)}% 1X2 probability
-                </span>
+                {oneX2 && (
+                  <span className="font-semibold text-foreground">
+                    {Math.round(oneX2.probability * 100)}% 1X2 probability
+                  </span>
+                )}
               </div>
               <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                {oneX2.rationale}
+                {oneX2?.rationale ?? "The authoritative 1X2 market was not available."}
               </p>
             </div>
 
             <div>
               <div className="label-xs text-primary">PREDICTED SCORE / SCENARIO</div>
               <div className="mt-2 text-2xl font-bold tracking-tight">
-                {result.predictedScore.replace("-", " : ")}
+                {renderPredictionOrUnavailable(result.predictedScore).replace("-", " : ")}
               </div>
               <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                 <ShieldCheck className="size-4 text-primary" />
@@ -202,8 +236,7 @@ function MatchIntelligence() {
             </div>
           </div>
 
-          {/* Quick Metrics Bar */}
-          <div className="mt-6 grid grid-cols-2 gap-3 border-t border-border pt-5 sm:grid-cols-5 text-xs">
+          <div className="mt-6 grid grid-cols-2 gap-3 border-t border-border pt-5 text-xs sm:grid-cols-5">
             <div>
               <span className="label-xs text-muted-foreground block">RISK</span>
               <span className="font-semibold text-foreground">{result.risk}</span>
@@ -231,7 +264,6 @@ function MatchIntelligence() {
           </div>
         </section>
 
-        {/* Actionable Markets Comparison Cards */}
         <section className="mt-6">
           <div className="label-xs text-primary">ACTIONABLE MARKETS COMPARISON</div>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
@@ -248,7 +280,6 @@ function MatchIntelligence() {
           </div>
         </section>
 
-        {/* Explainable Model Synthesis */}
         <section className="mt-6 panel p-6">
           <div className="flex items-center gap-2">
             <Sparkles className="size-4 text-primary" />
@@ -268,14 +299,13 @@ function MatchIntelligence() {
               </div>
             ))}
           </div>
-          <p className="mt-4 text-xs text-muted-foreground border-t border-border pt-3">
-            * Note: Explanations are generated deterministically from observed engine evidence,
+          <p className="mt-4 border-t border-border pt-3 text-xs text-muted-foreground">
+            * Explanations are generated deterministically from observed engine evidence,
             historical samples, and mathematical consensus. No external generative AI model
             overrides the quantitative selections.
           </p>
         </section>
 
-        {/* Model Ensemble Status & Evidence Health */}
         <section className="mt-6 grid gap-4 lg:grid-cols-2">
           <div className="panel p-5">
             <div className="label-xs text-primary">MODEL ENSEMBLE STATUS</div>
@@ -378,7 +408,7 @@ function HealthStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-border bg-card p-3">
       <div className="label-xs">{label}</div>
-      <div className="mt-1 font-semibold">{value}</div>
+      <div className="mt-1 break-all font-semibold">{value}</div>
     </div>
   );
 }
