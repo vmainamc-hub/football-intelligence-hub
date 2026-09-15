@@ -104,21 +104,45 @@ export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): Ma
   return map;
 }
 
+function unavailableMarket(reason: string): MarketSignal {
+  return {
+    market: "1X2",
+    selection: "NO QUALIFIED MARKET",
+    probability: 0,
+    confidence: 0,
+    tier: "WATCH",
+    rationale: reason,
+  };
+}
+
 /**
  * Deliver one actionable market without changing the authoritative 1X2 call.
- * The selector rewards probability, confidence, robustness, and data quality,
- * penalizes volatile risk, and refuses to promote a fragile market solely
- * because it is numerically high.
+ * Crucially, this function never falls back to a high-looking low-information
+ * market such as UNDER 3.5 when the team sample is insufficient.
  */
 export function bestQualifiedMarket(result: AuthoritativeMatchAnalysis): MarketSignal {
   const markets = buildMainstreamMarketMap(result);
-  const quality = result?.quality ?? 50;
-  const risk = result?.risk ?? "MODERATE";
-  const robustnessScore = result?.robustness?.score ?? 50;
+  const quality = result?.quality ?? 0;
+  const risk = result?.risk ?? "VERY HIGH";
+  const robustnessScore = result?.robustness?.score ?? 0;
+  const homeSample = result?.home?.played ?? 0;
+  const awaySample = result?.away?.played ?? 0;
+
+  if (
+    result?.decision === "INSUFFICIENT INTELLIGENCE" ||
+    homeSample < 4 ||
+    awaySample < 4 ||
+    quality < 40
+  ) {
+    return unavailableMarket(
+      `No market is promoted because evidence coverage is insufficient: home sample ${homeSample}, away sample ${awaySample}, quality ${quality}.`,
+    );
+  }
+
   const candidates = markets.filter((m) => {
     const minProbability =
       m.market === "OVER/UNDER 1.5" ? 0.64 : m.market === "DOUBLE CHANCE" ? 0.62 : 0.57;
-    return m.probability >= minProbability && quality >= 40 && risk !== "VERY HIGH";
+    return m.probability >= minProbability && risk !== "VERY HIGH";
   });
   const riskPenalty = risk === "VERY HIGH" ? 0.25 : risk === "HIGH" ? 0.1 : 0;
   const pool = candidates.length ? candidates : markets.filter((m) => m.market !== "1X2");
@@ -131,7 +155,7 @@ export function bestQualifiedMarket(result: AuthoritativeMatchAnalysis): MarketS
       riskPenalty;
     return score(b) - score(a);
   });
-  return ranked[0] ?? markets[0];
+  return ranked[0] ?? unavailableMarket("No mainstream market cleared the current evidence gates.");
 }
 
 export function primaryMarket(result: AuthoritativeMatchAnalysis): MarketSignal {
