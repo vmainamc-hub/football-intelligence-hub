@@ -128,53 +128,65 @@ function dedupe(rows: MatchRow[]) {
     return true;
   });
 }
+export async function getUniversalFixtures(
+  dateFrom: string,
+  dateTo: string,
+): Promise<MatchRow[]> {
+  const results: MatchRow[] = [];
+  try {
+    results.push(...(await getGlobalFallbackFixtures(dateFrom, dateTo)));
+  } catch {
+    // Ignore fallback failures and continue with other sources
+  }
+  try {
+    const r = await withTimeout(`${BASE}/api/widget/matches/?sport=football&limit=50`);
+    if (r.ok) results.push(...parseSportScore(await r.json(), "broad"));
+  } catch {
+    // Ignore network failures and continue with fallback results
+  }
+  return dedupe(results).filter((m) => m.date >= dateFrom && m.date <= dateTo);
+}
+
 export const fetchUniversalFixtures = createServerFn({ method: "GET" })
   .validator((input: { dateFrom: string; dateTo: string }) => input)
   .handler(async ({ data }): Promise<MatchRow[]> => {
-    const results: MatchRow[] = [];
-    try {
-      results.push(...(await getGlobalFallbackFixtures(data.dateFrom, data.dateTo)));
-    } catch {
-      // Ignore fallback failures and continue with other sources
-    }
-    try {
-      const r = await withTimeout(`${BASE}/api/widget/matches/?sport=football&limit=50`);
-      if (r.ok) results.push(...parseSportScore(await r.json(), "broad"));
-    } catch {
-      // Ignore network failures and continue with fallback results
-    }
-    return dedupe(results).filter((m) => m.date >= data.dateFrom && m.date <= data.dateTo);
+    return getUniversalFixtures(data.dateFrom, data.dateTo);
   });
+
+export async function queryUniversalFixtures(query: string): Promise<MatchRow[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const tokens = q
+    .split(/\s+(?:vs?|v|versus)\s+/i)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const teamTerms = (tokens.length >= 2 ? tokens : [q]).slice(0, 2);
+  const results: MatchRow[] = [];
+  const searches = teamTerms.map((team) =>
+    withTimeout(
+      `${BASE}/api/widget/team/?sport=football&slug=${encodeURIComponent(slugifyTeam(team))}&limit=30`,
+    )
+      .then(async (r) =>
+        r.ok ? parseSportScore(await r.json(), `team-${slugifyTeam(team)}`) : [],
+      )
+      .catch(() => [] as MatchRow[]),
+  );
+  for (const rows of await Promise.all(searches)) results.push(...rows);
+  // Team-history enrichment must return the UNION of both clubs' histories.
+  // Requiring both names in each row accidentally reduced this source to H2H-only.
+  const normalizedTerms = teamTerms.map((term) => term.toLowerCase());
+  return dedupe(results)
+    .filter((m) => {
+      const fixture = `${m.home} ${m.away}`.toLowerCase();
+      return normalizedTerms.some((term) => fixture.includes(term));
+    })
+    .sort((a, b) => `${a.date}|${a.time ?? ""}`.localeCompare(`${b.date}|${b.time ?? ""}`));
+}
+
 export const searchUniversalFixtures = createServerFn({ method: "GET" })
   .validator((input: { query: string }) => input)
   .handler(async ({ data }): Promise<MatchRow[]> => {
-    const q = data.query.trim();
-    if (!q) return [];
-    const tokens = q
-      .split(/\s+(?:vs?|v|versus)\s+/i)
-      .map((x) => x.trim())
-      .filter(Boolean);
-    const teamTerms = (tokens.length >= 2 ? tokens : [q]).slice(0, 2);
-    const results: MatchRow[] = [];
-    const searches = teamTerms.map((team) =>
-      withTimeout(
-        `${BASE}/api/widget/team/?sport=football&slug=${encodeURIComponent(slugifyTeam(team))}&limit=30`,
-      )
-        .then(async (r) =>
-          r.ok ? parseSportScore(await r.json(), `team-${slugifyTeam(team)}`) : [],
-        )
-        .catch(() => [] as MatchRow[]),
-    );
-    for (const rows of await Promise.all(searches)) results.push(...rows);
-    // Team-history enrichment must return the UNION of both clubs' histories.
-    // Requiring both names in each row accidentally reduced this source to H2H-only.
-    const normalizedTerms = teamTerms.map((term) => term.toLowerCase());
-    return dedupe(results)
-      .filter((m) => {
-        const fixture = `${m.home} ${m.away}`.toLowerCase();
-        return normalizedTerms.some((term) => fixture.includes(term));
-      })
-      .sort((a, b) => `${a.date}|${a.time ?? ""}`.localeCompare(`${b.date}|${b.time ?? ""}`));
+    return queryUniversalFixtures(data.query);
   });
 export type UniversalSourceStatus = {
   name: string;

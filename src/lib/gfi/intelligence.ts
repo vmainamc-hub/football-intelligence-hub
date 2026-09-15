@@ -1,6 +1,6 @@
-import { fetchFreeLeagueCsv } from "./free-data";
+import { fetchFreeLeagueCsv, getFreeLeagueCsv } from "./free-data";
 import { fixtureIdentity, type ExternalFixture } from "./fixture-sources";
-import { fetchUniversalFixtures } from "./universal-sources";
+import { fetchUniversalFixtures, getUniversalFixtures } from "./universal-sources";
 import { syncReservoir } from "./data-reservoir";
 import { analyzeAuthoritatively } from "./authoritative";
 import {
@@ -189,12 +189,31 @@ function addFallbackGroups(groups: FreeLeague[], fallback: ExternalFixture[]) {
   }
   return next;
 }
+export type GlobalDiscoveryStatus = {
+  status: "OPTIMAL" | "DEGRADED";
+  externalFixturesFound: number;
+  totalGroups: number;
+  message?: string;
+  checkedAt: string;
+};
+
+let lastDiscoveryStatus: GlobalDiscoveryStatus = {
+  status: "OPTIMAL",
+  externalFixturesFound: 0,
+  totalGroups: 0,
+  checkedAt: new Date().toISOString(),
+};
+
+export function getGlobalDiscoveryStatus(): GlobalDiscoveryStatus {
+  return lastDiscoveryStatus;
+}
+
 export async function loadFreeFixtures(): Promise<FreeLeague[]> {
   const season = currentSeasonCode(),
     entries = Object.entries(LEAGUES);
   const settled = await Promise.allSettled(
     entries.map(async ([code, league]) => {
-      const payload = await fetchFreeLeagueCsv({ data: { code, season } });
+      const payload = await getFreeLeagueCsv(code, season);
       const matches = parseCsv(payload.csv);
       if (!matches.length) throw new Error(`${league} returned no usable matches`);
       return {
@@ -210,13 +229,29 @@ export async function loadFreeFixtures(): Promise<FreeLeague[]> {
   let loaded = settled.flatMap((x) => (x.status === "fulfilled" ? [x.value] : []));
   if (!loaded.length) throw new Error(`FREE football data feed unavailable for season ${season}.`);
   const today = kenyaDateKey();
+  let externalFound = 0;
   try {
-    const fallback = await fetchUniversalFixtures({
-      data: { dateFrom: today, dateTo: addDays(today, 14) },
-    });
+    const fallback = await getUniversalFixtures(today, addDays(today, 14));
+    externalFound = fallback.length;
     loaded = addFallbackGroups(loaded, fallback as ExternalFixture[]);
-  } catch {
-    // The fallback layer is additive; the primary free feeds remain usable.
+    lastDiscoveryStatus = {
+      status: externalFound > 0 ? "OPTIMAL" : "DEGRADED",
+      externalFixturesFound: externalFound,
+      totalGroups: loaded.length,
+      message:
+        externalFound > 0
+          ? undefined
+          : "GLOBAL DISCOVERY DEGRADED: external providers returned 0 upcoming fixtures.",
+      checkedAt: new Date().toISOString(),
+    };
+  } catch (err) {
+    lastDiscoveryStatus = {
+      status: "DEGRADED",
+      externalFixturesFound: 0,
+      totalGroups: loaded.length,
+      message: `GLOBAL DISCOVERY DEGRADED: ${err instanceof Error ? err.message : String(err)}`,
+      checkedAt: new Date().toISOString(),
+    };
   }
   const reservoirRows = loaded.flatMap((group) =>
     group.matches.map((match) => ({ ...match, league: group.league, code: group.code })),

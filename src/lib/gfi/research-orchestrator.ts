@@ -1,17 +1,23 @@
 import { createServerFn } from "@tanstack/react-start";
 import { reservoirHistoricalContext, type ReservoirMatch } from "./data-reservoir";
-import { searchUniversalFixtures } from "./universal-sources";
+import { queryUniversalFixtures } from "./universal-sources";
 import { fetchEspnFixtures } from "./espn-sources";
+import { acquireWebEvidence, type WebEvidenceResult } from "./tavily-evidence";
 import type { MatchRow } from "./intelligence";
+
+export { acquireWebEvidence, type WebEvidenceResult } from "./tavily-evidence";
+
 export type ResearchResult = {
   query: string;
   matches: MatchRow[];
   reservoirMatches: number;
   liveMatches: number;
+  webMatches: number;
   distinctSources: number;
   sources: string[];
   coverage: number;
   searchedAt: string;
+  webEvidence?: WebEvidenceResult;
 };
 const identity = (r: MatchRow) =>
   `${r.date}|${r.home.toLowerCase()}|${r.away.toLowerCase()}|${r.time ?? ""}|${r.hg ?? ""}|${r.ag ?? ""}`;
@@ -61,6 +67,7 @@ export const researchFixture = createServerFn({ method: "GET" })
         matches: [],
         reservoirMatches: 0,
         liveMatches: 0,
+        webMatches: 0,
         distinctSources: 0,
         sources: [],
         coverage: 0,
@@ -73,7 +80,7 @@ export const researchFixture = createServerFn({ method: "GET" })
       to = fixtureDate ? addDays(fixtureDate, 3) : addDays(today, 3);
     const [stored, live, espn] = await Promise.all([
       reservoirHistoricalContext(home, away, 500).catch(() => [] as ReservoirMatch[]),
-      searchUniversalFixtures({ data: { query: stripDate(query) } }).catch(() => [] as MatchRow[]),
+      queryUniversalFixtures(stripDate(query)).catch(() => [] as MatchRow[]),
       fetchEspnFixtures(from, to).catch(() => [] as MatchRow[]),
     ]);
     const merged = new Map<string, MatchRow>();
@@ -97,10 +104,46 @@ export const researchFixture = createServerFn({ method: "GET" })
         merged.set(identity(r), r);
       }
     }
+
+    // Evidence sufficiency check:
+    // If internal historical context is sparse (< 8 completed matches), automatically
+    // acquire additional web evidence using Tavily for recent results, H2H, and form.
+    let webEvidence: WebEvidenceResult | undefined;
+    let webMatches = 0;
+    const internalHistoryCount = [...merged.values()].filter(
+      (r) => r.hg !== undefined && r.ag !== undefined,
+    ).length;
+
+    if (internalHistoryCount < 8 && home && away) {
+      try {
+        webEvidence = await acquireWebEvidence({
+          home,
+          away,
+          fixtureDate,
+        });
+        if (webEvidence && webEvidence.datedScoreRows.length > 0) {
+          for (const r of webEvidence.datedScoreRows) {
+            const key = identity(r);
+            if (!merged.has(key)) {
+              merged.set(key, r);
+              webMatches++;
+            }
+          }
+        }
+      } catch {
+        // Web evidence failure isolation: Never crashes research orchestration
+      }
+    }
+
     const matches = [...merged.values()].sort((a, b) =>
         `${a.date}|${a.time ?? ""}`.localeCompare(`${b.date}|${b.time ?? ""}`),
       ),
-      sources = [...new Set(matches.map((r) => r.source ?? "unknown"))],
+      sources = [
+        ...new Set([
+          ...matches.map((r) => r.source ?? "unknown"),
+          ...(webEvidence?.sources ?? []),
+        ]),
+      ],
       history = matches.filter((r) => r.hg !== undefined && r.ag !== undefined).length,
       fixtureEvidence = matches.some((r) =>
         fixtureDate ? r.date === fixtureDate : r.hg === undefined || r.ag === undefined,
@@ -119,10 +162,12 @@ export const researchFixture = createServerFn({ method: "GET" })
       matches,
       reservoirMatches: stored.length,
       liveMatches: live.length + matchedEspn,
+      webMatches,
       distinctSources: sources.length,
       sources,
       coverage,
       searchedAt,
+      webEvidence,
     };
   });
 export async function researchTeamOrFixture(query: string) {

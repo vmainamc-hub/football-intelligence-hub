@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { loadFreeFixtures, type MatchRow } from "./intelligence";
 import { analyzeLoadedFixture, type ServerMatchAnalysis } from "./server-pipeline";
-import { researchFixture } from "./research-orchestrator";
+import { researchFixture, researchTeamOrFixture } from "./research-orchestrator";
 import { loadLivingEvidence } from "./living-evidence";
 import { requestFixtureMining } from "./on-demand-evidence";
 import type { FreeLeague } from "./intelligence";
@@ -44,75 +44,75 @@ function livingGroup(
   };
 }
 
-export const analyzeFreeMatch = createServerFn({ method: "POST" })
-  .validator((input: { code: string; fixture: MatchRow }) => input)
-  .handler(async ({ data }): Promise<ServerMatchAnalysis> => {
-    const [groups, research, initialLiving] = await Promise.all([
-      loadFreeFixtures(),
-      researchFixture({
-        data: { query: `${data.fixture.home} vs ${data.fixture.away} ${data.fixture.date}` },
-      }).catch(() => ({
-        matches: [],
-        reservoirMatches: 0,
-        liveMatches: 0,
-        distinctSources: 0,
-        sources: [],
-        coverage: 0,
-        query: "",
-        searchedAt: new Date().toISOString(),
-      })),
-      loadLivingEvidence(data.fixture).catch(() => ({
-        matchRows: [],
-        h2hRows: [],
-        homeTeamRows: [],
-        awayTeamRows: [],
-        sourceFamilies: [],
-        sourceFamilyCounts: {},
-        matchCompleteness: 0,
-        homeCompleteness: 0,
-        awayCompleteness: 0,
-        evidenceCount: 0,
-        sourceCount: 0,
-        status: "NO_CELL" as const,
-      })),
-    ]);
-    let living = initialLiving;
+export async function runMatchAnalysis(
+  code: string,
+  fixture: MatchRow,
+): Promise<ServerMatchAnalysis> {
+  const [groups, research, initialLiving] = await Promise.all([
+    loadFreeFixtures(),
+    researchTeamOrFixture(`${fixture.home} vs ${fixture.away} ${fixture.date}`).catch(() => ({
+      matches: [],
+      reservoirMatches: 0,
+      liveMatches: 0,
+      webMatches: 0,
+      distinctSources: 0,
+      sources: [],
+      coverage: 0,
+      query: "",
+      searchedAt: new Date().toISOString(),
+    })),
+    loadLivingEvidence(fixture).catch(() => ({
+      matchRows: [],
+      h2hRows: [],
+      homeTeamRows: [],
+      awayTeamRows: [],
+      sourceFamilies: [],
+      sourceFamilyCounts: {},
+      matchCompleteness: 0,
+      homeCompleteness: 0,
+      awayCompleteness: 0,
+      evidenceCount: 0,
+      sourceCount: 0,
+      status: "NO_CELL" as const,
+    })),
+  ]);
+  let living = initialLiving;
 
-    // Sparse fixtures get one bounded mining attempt before the terminal analysis.
-    // This makes the living evidence path actionable rather than merely passive.
-    const directLivingRows =
-      living.matchRows.length +
-      living.homeTeamRows.length +
-      living.awayTeamRows.length +
-      living.h2hRows.length;
-    if (directLivingRows === 0) {
-      await requestFixtureMining(data.fixture);
-      living = await loadLivingEvidence(data.fixture).catch(() => living);
-    }
+  // Sparse fixtures get one bounded mining attempt before the terminal analysis.
+  // This makes the living evidence path actionable rather than merely passive.
+  const directLivingRows =
+    living.matchRows.length +
+    living.homeTeamRows.length +
+    living.awayTeamRows.length +
+    living.h2hRows.length;
+  if (directLivingRows === 0) {
+    await requestFixtureMining(fixture);
+    living = await loadLivingEvidence(fixture).catch(() => living);
+  }
 
-    const researchRows = mergeMatches(research.matches);
-    const targetGroup = groups.find(
-      (item) => item.code === data.code || item.league === data.fixture.league,
-    );
-    const researchGroup: FreeLeague = {
-      league: data.fixture.league ?? targetGroup?.league ?? "Worldwide Football",
-      code: `RESEARCH_${data.code || "GLOBAL"}`,
-      season: "research",
-      matches: researchRows,
-      sourceUrl: "reservoir-plus-live-public-research",
-      fetchedAt: research.searchedAt,
-    };
-    const livingEvidenceGroup = livingGroup(data.fixture, living);
-    const expandedGroups = [
-      ...groups,
-      ...(livingEvidenceGroup ? [livingEvidenceGroup] : []),
-      researchGroup,
-    ];
-    const analysis = analyzeLoadedFixture(
-      data.fixture,
-      targetGroup?.code ?? livingEvidenceGroup?.code ?? researchGroup.code,
-      expandedGroups,
-    );
+  const researchRows = mergeMatches(research.matches);
+  const targetGroup = groups.find(
+    (item) => item.code === code || item.league === fixture.league,
+  );
+  const researchGroup: FreeLeague = {
+    league: fixture.league ?? targetGroup?.league ?? "Worldwide Football",
+    code: `RESEARCH_${code || "GLOBAL"}`,
+    season: "research",
+    matches: researchRows,
+    sourceUrl: "reservoir-plus-live-public-research",
+    fetchedAt: research.searchedAt,
+  };
+  const livingEvidenceGroup = livingGroup(fixture, living);
+  const expandedGroups = [
+    ...groups,
+    ...(livingEvidenceGroup ? [livingEvidenceGroup] : []),
+    researchGroup,
+  ];
+  const analysis = analyzeLoadedFixture(
+    fixture,
+    targetGroup?.code ?? livingEvidenceGroup?.code ?? researchGroup.code,
+    expandedGroups,
+  );
     analysis.pipeline.historicalRowsLoaded = Math.max(
       analysis.pipeline.historicalRowsLoaded,
       research.reservoirMatches +
@@ -121,22 +121,55 @@ export const analyzeFreeMatch = createServerFn({ method: "POST" })
         living.awayTeamRows.length,
     );
     analysis.pipeline.competitionsLoaded = expandedGroups.length;
+    const additionalWarnings: string[] = [
+      `Public evidence ladder: ${research.coverage}% live/public coverage across ${research.distinctSources} live source families (${research.reservoirMatches} stored observations, ${research.liveMatches} live/public observations, ${research.webMatches ?? 0} web observations).`,
+      `Living evidence cell: ${living.evidenceCount} accumulated observations, ${living.sourceCount} source records, ${living.sourceFamilies.length} distinct source families, ${living.matchCompleteness}% match completeness.`,
+    ];
+    if (research.webEvidence?.attempted) {
+      additionalWarnings.push(
+        `Web evidence mining (Tavily): acquired ${research.webEvidence.usefulFootballResults} verified football sources, extracting ${research.webEvidence.datedScoreRows.length} dated score observations and ${research.webEvidence.structuredFacts.length} structured facts.`,
+      );
+    }
     analysis.warnings = [
       ...new Set([
         ...analysis.warnings,
-        `Public evidence ladder: ${research.coverage}% live/public coverage across ${research.distinctSources} live source families (${research.reservoirMatches} stored observations, ${research.liveMatches} live/public observations).`,
-        `Living evidence cell: ${living.evidenceCount} accumulated observations, ${living.sourceCount} source records, ${living.sourceFamilies.length} distinct source families, ${living.matchCompleteness}% match completeness.`,
+        ...additionalWarnings,
       ]),
     ];
+    if (research.webEvidence?.structuredFacts?.length) {
+      for (const fact of research.webEvidence.structuredFacts.slice(0, 5)) {
+        analysis.evidenceLedger.push({
+          metric: `Web Intelligence (${fact.domain})`,
+          statement: fact.title,
+          homeImpact: "NEUTRAL",
+          awayImpact: "NEUTRAL",
+          confidence: fact.confidence,
+          source: "EXTERNAL_SOURCE",
+        });
+      }
+    }
     analysis.aiReasoningPacket = {
       ...analysis.aiReasoningPacket,
       research: {
         reservoirMatches: research.reservoirMatches,
         liveMatches: research.liveMatches,
+        webMatches: research.webMatches ?? 0,
         distinctSources: research.distinctSources,
         sources: research.sources,
         coverage: research.coverage,
         searchedAt: research.searchedAt,
+        webEvidence: research.webEvidence
+          ? {
+              configured: research.webEvidence.configured,
+              attempted: research.webEvidence.attempted,
+              searchesAttempted: research.webEvidence.searchesAttempted,
+              resultsReturned: research.webEvidence.resultsReturned,
+              usefulFootballResults: research.webEvidence.usefulFootballResults,
+              datedScoreRowsCount: research.webEvidence.datedScoreRows.length,
+              factsCount: research.webEvidence.structuredFacts.length,
+              sources: research.webEvidence.sources,
+            }
+          : undefined,
       },
       livingEvidence: {
         status: living.status,
@@ -169,4 +202,10 @@ export const analyzeFreeMatch = createServerFn({ method: "POST" })
       };
     }
     return analysis;
+}
+
+export const analyzeFreeMatch = createServerFn({ method: "POST" })
+  .validator((input: { code: string; fixture: MatchRow }) => input)
+  .handler(async ({ data }): Promise<ServerMatchAnalysis> => {
+    return runMatchAnalysis(data.code, data.fixture);
   });
