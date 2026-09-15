@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { MatchRow } from "./intelligence";
 import { canonicalCompetitionName, canonicalTeamName, parseScoreCell } from "./identity";
 import { fetchEspnFixtures } from "./espn-sources";
-import { fetchBetikaFixtures } from "./betika-sources";
+import { getBetikaFixtures, fetchBetikaFixtures } from "./betika-sources";
 
 export type FixtureSourceName = "football-data" | "openfootball" | "sportsdb" | "espn" | "betika";
 export type ExternalFixture = MatchRow & {
@@ -151,39 +151,41 @@ async function collectSportsDb(from: string, to: string) {
   return out;
 }
 
-export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
-  .validator((input: { dateFrom: string; dateTo: string }) => input)
-  .handler(async ({ data }): Promise<ExternalFixture[]> => {
-    const results: ExternalFixture[] = [];
-    const openfootball = await Promise.allSettled(
-      OPENFOOTBALL_LEAGUES.map(async (entry) => {
-        const response = await withTimeout(`${OPENFOOTBALL_BASE}/${entry.file}`, {
-          headers: { Accept: "application/json" },
-        });
-        if (!response.ok) throw new Error(`OpenFootball ${entry.file}: HTTP ${response.status}`);
-        return parseOpenFootball(
-          await response.json(),
-          entry.league,
-          response.url || `${OPENFOOTBALL_BASE}/${entry.file}`,
-        );
-      }),
-    );
-    for (const result of openfootball)
-      if (result.status === "fulfilled") results.push(...result.value);
+export async function getGlobalFallbackFixtures(
+  dateFrom: string,
+  dateTo: string,
+): Promise<ExternalFixture[]> {
+  const results: ExternalFixture[] = [];
+  const openfootball = await Promise.allSettled(
+    OPENFOOTBALL_LEAGUES.map(async (entry) => {
+      const response = await withTimeout(`${OPENFOOTBALL_BASE}/${entry.file}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) throw new Error(`OpenFootball ${entry.file}: HTTP ${response.status}`);
+      return parseOpenFootball(
+        await response.json(),
+        entry.league,
+        response.url || `${OPENFOOTBALL_BASE}/${entry.file}`,
+      );
+    }),
+  );
+  for (const result of openfootball)
+    if (result.status === "fulfilled") results.push(...result.value);
 
-    const [betika, sportsDb, espn] = await Promise.all([
-      fetchBetikaFixtures({ data: { dateFrom: data.dateFrom, dateTo: data.dateTo } }),
-      collectSportsDb(data.dateFrom, data.dateTo),
-      fetchEspnFixtures(data.dateFrom, data.dateTo),
-    ]);
+  const [betikaSettled, sportsDbSettled, espnSettled] = await Promise.allSettled([
+    getBetikaFixtures(dateFrom, dateTo),
+    collectSportsDb(dateFrom, dateTo),
+    fetchEspnFixtures(dateFrom, dateTo),
+  ]);
 
-    // Betika is deliberately first so its current bookmaker fixture universe
-    // becomes the canonical display row when another source reports the same
-    // scheduled match. It is still never used as a prediction authority.
-    results.push(...betika);
-    results.push(...sportsDb);
+  // Betika is deliberately first so its current bookmaker fixture universe
+  // becomes the canonical display row when another source reports the same
+  // scheduled match. It is still never used as a prediction authority.
+  if (betikaSettled.status === "fulfilled") results.push(...betikaSettled.value);
+  if (sportsDbSettled.status === "fulfilled") results.push(...sportsDbSettled.value);
+  if (espnSettled.status === "fulfilled") {
     results.push(
-      ...espn.map(
+      ...espnSettled.value.map(
         (m) =>
           ({
             ...m,
@@ -192,16 +194,23 @@ export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
           }) satisfies ExternalFixture,
       ),
     );
+  }
 
-    const seen = new Set<string>();
-    return results.filter((match) => {
-      const date = sourceDateKey(match.date);
-      if (date < data.dateFrom || date > data.dateTo) return false;
-      const id = `${date}|${match.home.toLowerCase()}|${match.away.toLowerCase()}|${match.time ?? ""}`;
-      if (seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    });
+  const seen = new Set<string>();
+  return results.filter((match) => {
+    const date = sourceDateKey(match.date);
+    if (date < dateFrom || date > dateTo) return false;
+    const id = `${date}|${match.home.toLowerCase()}|${match.away.toLowerCase()}|${match.time ?? ""}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
+  .validator((input: { dateFrom: string; dateTo: string }) => input)
+  .handler(async ({ data }): Promise<ExternalFixture[]> => {
+    return getGlobalFallbackFixtures(data.dateFrom, data.dateTo);
   });
 
 export function normalizeTeamName(value: string) {

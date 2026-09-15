@@ -160,18 +160,23 @@ async function fetchBetikaPages(maxPages = 8) {
   return results;
 }
 
+export async function getBetikaFixtures(
+  dateFrom: string,
+  dateTo: string,
+): Promise<BetikaFixture[]> {
+  const key = `${dateFrom}|${dateTo}`;
+  if (cache && cache.key === key && cache.expiresAt > Date.now()) return cache.fixtures;
+
+  const fixtures = await fetchBetikaPages();
+  const filtered = fixtures.filter((fixture) => fixture.date >= dateFrom && fixture.date <= dateTo);
+  cache = { key, fixtures: filtered, expiresAt: Date.now() + CACHE_TTL_MS };
+  return filtered;
+}
+
 export const fetchBetikaFixtures = createServerFn({ method: "GET" })
   .validator((input: { dateFrom: string; dateTo: string }) => input)
   .handler(async ({ data }): Promise<BetikaFixture[]> => {
-    const key = `${data.dateFrom}|${data.dateTo}`;
-    if (cache && cache.key === key && cache.expiresAt > Date.now()) return cache.fixtures;
-
-    const fixtures = await fetchBetikaPages();
-    const filtered = fixtures.filter(
-      (fixture) => fixture.date >= data.dateFrom && fixture.date <= data.dateTo,
-    );
-    cache = { key, fixtures: filtered, expiresAt: Date.now() + CACHE_TTL_MS };
-    return filtered;
+    return getBetikaFixtures(data.dateFrom, data.dateTo);
   });
 
 export { parsePage as parseBetikaHtml };

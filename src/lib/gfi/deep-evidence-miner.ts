@@ -3,7 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { canonicalTeamKey, canonicalTeamName, canonicalCompetitionName } from "./identity";
 import { searchReservoir, type ReservoirMatch } from "./data-reservoir";
 import { researchTeamOrFixture } from "./research-orchestrator";
-import { fetchGlobalFallbackFixtures } from "./fixture-sources";
+import { getGlobalFallbackFixtures, fetchGlobalFallbackFixtures } from "./fixture-sources";
 import { fetchEspnFixtures } from "./espn-sources";
 import { searchUniversalFixtures } from "./universal-sources";
 import type { MatchRow } from "./intelligence";
@@ -181,7 +181,7 @@ async function collectDeepPublicEvidence(home: string, away: string, fixtureDate
   const to = addDays(fixtureDate, 3);
   const yearAgo = addDays(fixtureDate, -365);
   const [global, universal, espn] = await Promise.all([
-    safeRows(fetchGlobalFallbackFixtures({ data: { dateFrom: yearAgo, dateTo: to } })),
+    safeRows(getGlobalFallbackFixtures(yearAgo, to)),
     safeRows(searchUniversalFixtures({ data: { query: `${home} vs ${away}` } })),
     safeRows(fetchEspnFixtures(from, to)),
   ]);

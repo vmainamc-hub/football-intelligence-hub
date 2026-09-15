@@ -1,5 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
-import { fetchGlobalFallbackFixtures, type ExternalFixture } from "./fixture-sources";
+import {
+  getGlobalFallbackFixtures,
+  fetchGlobalFallbackFixtures,
+  type ExternalFixture,
+} from "./fixture-sources";
 import type { MatchRow } from "./intelligence";
 import { canonicalCompetitionName, canonicalTeamName } from "./identity";
 
@@ -127,7 +131,12 @@ function dedupe(rows: MatchRow[]) {
 export const fetchUniversalFixtures = createServerFn({ method: "GET" })
   .validator((input: { dateFrom: string; dateTo: string }) => input)
   .handler(async ({ data }): Promise<MatchRow[]> => {
-    const results: MatchRow[] = await fetchGlobalFallbackFixtures({ data });
+    const results: MatchRow[] = [];
+    try {
+      results.push(...(await getGlobalFallbackFixtures(data.dateFrom, data.dateTo)));
+    } catch {
+      // Ignore fallback failures and continue with other sources
+    }
     try {
       const r = await withTimeout(`${BASE}/api/widget/matches/?sport=football&limit=50`);
       if (r.ok) results.push(...parseSportScore(await r.json(), "broad"));
