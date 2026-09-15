@@ -25,16 +25,23 @@ export function buildMatchReasoning(
   fixture: MatchRow,
   result: AuthoritativeMatchAnalysis,
 ): MatchReasoning {
-  const p = result.probabilities,
-    top = Math.max(p.home, p.draw, p.away),
-    claims: ReasoningClaim[] = [];
-  const leader = p.home === top ? result.home.team : p.away === top ? result.away.team : "Draw";
+  const p = result?.probabilities ?? { home: 0.33, draw: 0.34, away: 0.33 };
+  const home = typeof p.home === "number" ? p.home : 0.33;
+  const draw = typeof p.draw === "number" ? p.draw : 0.34;
+  const away = typeof p.away === "number" ? p.away : 0.33;
+  const top = Math.max(home, draw, away);
+  const claims: ReasoningClaim[] = [];
+  const homeTeam = result?.home?.team ?? fixture.home;
+  const awayTeam = result?.away?.team ?? fixture.away;
+  const leader = home === top ? homeTeam : away === top ? awayTeam : "Draw";
+  const agreement = result?.consensus?.agreement ?? 0.5;
+  const conflict = result?.consensus?.conflict ?? 0.2;
   if (result.decision === "HOME EDGE" || result.decision === "AWAY EDGE")
     claims.push({
       id: "consensus-leader",
       signal: "SUPPORT",
       statement: `${leader} leads the authoritative 1X2 consensus.`,
-      evidence: `H ${Math.round(p.home * 100)}% · D ${Math.round(p.draw * 100)}% · A ${Math.round(p.away * 100)}%; ${Math.round(result.consensus.agreement * 100)}% cross-engine agreement.`,
+      evidence: `H ${Math.round(home * 100)}% · D ${Math.round(draw * 100)}% · A ${Math.round(away * 100)}%; ${Math.round(agreement * 100)}% cross-engine agreement.`,
       strength: top,
     });
   else
@@ -43,13 +50,14 @@ export function buildMatchReasoning(
       signal: "CONTRADICTION",
       statement:
         "No sufficiently dominant 1X2 outcome survives the authoritative conflict and evidence checks.",
-      evidence: `H ${Math.round(p.home * 100)}% · D ${Math.round(p.draw * 100)}% · A ${Math.round(p.away * 100)}%; conflict ${Math.round(result.consensus.conflict * 100)}%.`,
+      evidence: `H ${Math.round(home * 100)}% · D ${Math.round(draw * 100)}% · A ${Math.round(away * 100)}%; conflict ${Math.round(conflict * 100)}%.`,
       strength: 1 - top,
     });
-  const form = result.engines.find((e) => e.id === "FORM"),
-    goals = result.engines.find((e) => e.id === "GOALS"),
-    venue = result.engines.find((e) => e.id === "VENUE"),
-    h2h = result.engines.find((e) => e.id === "H2H");
+  const engines = result?.engines ?? [];
+  const form = engines.find((e) => e.id === "FORM"),
+    goals = engines.find((e) => e.id === "GOALS"),
+    venue = engines.find((e) => e.id === "VENUE"),
+    h2h = engines.find((e) => e.id === "H2H");
   for (const e of [form, goals, venue, h2h])
     if (e && e.signal !== "NEUTRAL")
       claims.push({

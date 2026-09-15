@@ -139,6 +139,7 @@ export function analyzeActiveAuthoritatively(
 
   return {
     ...base,
+    probabilities: { home: p.home, draw: p.draw, away: p.away },
     analysisVersion: "gfi-authoritative-v6.2",
     engines,
     evidenceLedger: ledger,

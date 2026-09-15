@@ -3,7 +3,6 @@ import { loadFreeFixtures, type MatchRow } from "./intelligence";
 import { analyzeLoadedFixture, type ServerMatchAnalysis } from "./server-pipeline";
 import { researchFixture } from "./research-orchestrator";
 import type { FreeLeague } from "./intelligence";
-import { runtimeFingerprint } from "./runtime-fingerprint";
 
 export type { AnalysisPipelineTrace, ServerMatchAnalysis } from "./server-pipeline";
 
@@ -63,12 +62,13 @@ export const analyzeFreeMatch = createServerFn({ method: "POST" })
     analysis.warnings = [
       ...new Set([
         ...analysis.warnings,
-        `Research coverage ${research.coverage}% across ${research.distinctSources} source families.`,
+        research.coverage < 70
+          ? `Research coverage ${research.coverage}% across ${research.distinctSources} source families.`
+          : `Research coverage ${research.coverage}% across ${research.distinctSources} source families.`,
       ]),
     ];
     analysis.aiReasoningPacket = {
       ...analysis.aiReasoningPacket,
-      runtimeFingerprint,
       research: {
         reservoirMatches: research.reservoirMatches,
         liveMatches: research.liveMatches,

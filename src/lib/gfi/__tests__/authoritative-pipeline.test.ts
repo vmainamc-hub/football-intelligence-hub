@@ -10,7 +10,7 @@ import {
 } from "../identity.ts";
 import { analyzeActiveAuthoritatively } from "../authoritative-runtime.ts";
 import { bestQualifiedMarket, buildMainstreamMarketMap } from "../market-map.ts";
-import type { MatchRow } from "../intelligence.ts";
+import type { AuthoritativeMatchAnalysis, MatchRow } from "../intelligence.ts";
 
 test("1. Score Parsing: blank/empty/whitespace score cells return undefined, never 0", () => {
   assert.equal(parseScoreCell(""), undefined);
@@ -402,4 +402,34 @@ test("10. Ledger Storage: Deduplicates fixture saves instead of creating ghost e
   );
 
   assert.equal(isDuplicate, true, "Must detect duplicate fixture across team name variants");
+});
+
+test("11. Resilience: Market map and reasoning safely handle missing or partial probabilities without crashing", () => {
+  // Pass an object with undefined probabilities (the exact case that triggered the crash)
+  const malformedAnalysis = {
+    fixtureId: "test-match",
+    home: { team: "Arsenal", played: 10 },
+    away: { team: "Chelsea", played: 10 },
+    confidence: 60,
+    quality: 65,
+    risk: "LOW",
+    decision: "NO STRONG EDGE",
+    probabilities: undefined,
+    engines: [],
+  } as unknown as AuthoritativeMatchAnalysis;
+
+  // buildMainstreamMarketMap must not throw Cannot destructure property 'home' of 'result.probabilities' as it is undefined
+  assert.doesNotThrow(() => {
+    const map = buildMainstreamMarketMap(malformedAnalysis);
+    assert.ok(Array.isArray(map));
+    assert.ok(map.length > 0);
+    assert.equal(map[0].market, "1X2");
+  });
+
+  // bestQualifiedMarket must also not throw
+  assert.doesNotThrow(() => {
+    const best = bestQualifiedMarket(malformedAnalysis);
+    assert.ok(best);
+    assert.ok(best.market);
+  });
 });

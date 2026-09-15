@@ -103,9 +103,9 @@ export function simulateAnalysis(
   const base = simulateGoalBaseline(lambdaHome, lambdaAway, analysis.fixtureId, iterations);
   const simulationMax = Math.max(base.homeWin, base.draw, base.awayWin);
   const authoritativeMax = Math.max(
-    analysis.probabilities.home,
-    analysis.probabilities.draw,
-    analysis.probabilities.away,
+    analysis.probabilities?.home ?? 0.33,
+    analysis.probabilities?.draw ?? 0.34,
+    analysis.probabilities?.away ?? 0.33,
   );
   const scenarioAgreement = Math.max(0, 1 - Math.abs(simulationMax - authoritativeMax) * 2);
   return { ...base, scenarioAgreement, sourceAnalysisVersion: analysis.analysisVersion };

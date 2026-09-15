@@ -145,9 +145,9 @@ function PredictionRow({ p, refresh }: { p: LedgerPrediction; refresh: () => voi
       <div className="mt-3 grid grid-cols-3 gap-2">
         {(
           [
-            ["H", p.probabilities.home],
-            ["D", p.probabilities.draw],
-            ["A", p.probabilities.away],
+            ["H", p.probabilities?.home ?? 0],
+            ["D", p.probabilities?.draw ?? 0],
+            ["A", p.probabilities?.away ?? 0],
           ] as const
         ).map(([k, v]) => (
           <div key={k} className="border border-border p-3">

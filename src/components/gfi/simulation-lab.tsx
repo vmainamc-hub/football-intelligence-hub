@@ -153,17 +153,17 @@ export const SimulationLab = () => {
                 <div className="mt-5 grid gap-3 sm:grid-cols-4">
                   <Mini
                     label={selected.home}
-                    value={`${Math.round(analysis.data.probabilities.home * 100)}%`}
+                    value={`${Math.round((analysis.data.probabilities?.home ?? 0) * 100)}%`}
                   />
                   <Mini
                     label="DRAW"
-                    value={`${Math.round(analysis.data.probabilities.draw * 100)}%`}
+                    value={`${Math.round((analysis.data.probabilities?.draw ?? 0) * 100)}%`}
                   />
                   <Mini
                     label={selected.away}
-                    value={`${Math.round(analysis.data.probabilities.away * 100)}%`}
+                    value={`${Math.round((analysis.data.probabilities?.away ?? 0) * 100)}%`}
                   />
-                  <Mini label="VERDICT" value={analysis.data.decision.replace("_", " ")} />
+                  <Mini label="VERDICT" value={analysis.data.decision?.replace("_", " ") ?? "—"} />
                 </div>
               </div>
               <div className="mt-5 panel p-6">

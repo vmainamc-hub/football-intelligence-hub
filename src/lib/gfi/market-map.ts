@@ -21,23 +21,28 @@ const clamp = (n: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, n));
 const pct = (n: number) => Math.round(clamp(n) * 100);
 
 function goalProbability(result: AuthoritativeMatchAnalysis, key: string) {
-  return result.engines.find((item) => item.id === "TOTALS")?.values[key];
+  return result?.engines?.find((item) => item.id === "TOTALS")?.values?.[key];
 }
 function bttsProbability(result: AuthoritativeMatchAnalysis) {
-  return result.engines.find((item) => item.id === "BTTS")?.values.yes;
+  return result?.engines?.find((item) => item.id === "BTTS")?.values?.yes;
 }
 
 export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): MarketSignal[] {
-  const { home, draw, away } = result.probabilities;
-  const winner =
-    home >= draw && home >= away ? result.home.team : away >= draw ? result.away.team : "DRAW";
+  const probs = result?.probabilities ?? { home: 0.33, draw: 0.34, away: 0.33 };
+  const home = typeof probs.home === "number" ? probs.home : 0.33;
+  const draw = typeof probs.draw === "number" ? probs.draw : 0.34;
+  const away = typeof probs.away === "number" ? probs.away : 0.33;
+  const homeTeam = result?.home?.team ?? "Home";
+  const awayTeam = result?.away?.team ?? "Away";
+  const winner = home >= draw && home >= away ? homeTeam : away >= draw ? awayTeam : "DRAW";
   const winnerProbability = Math.max(home, draw, away);
+  const confidence = result?.confidence ?? 50;
   const map: MarketSignal[] = [
     {
       market: "1X2",
       selection: winner === "DRAW" ? "DRAW" : `${winner} WIN`,
       probability: winnerProbability,
-      confidence: result.confidence,
+      confidence,
       tier: "PRIMARY",
       rationale: `Highest core 1X2 probability: ${pct(winnerProbability)}%.`,
     },
@@ -52,7 +57,7 @@ export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): Ma
     market: "DOUBLE CHANCE",
     selection: dc.selection,
     probability: dc.probability,
-    confidence: Math.round((result.confidence + pct(dc.probability)) / 2),
+    confidence: Math.round((confidence + pct(dc.probability)) / 2),
     tier: dc.probability >= 0.62 ? "SECONDARY" : "WATCH",
     rationale: `Two-result coverage at ${pct(dc.probability)}% model probability.`,
   });
@@ -62,9 +67,9 @@ export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): Ma
   const dnbProbability = Math.max(dnbHome, dnbAway);
   map.push({
     market: "DRAW NO BET",
-    selection: dnbHome >= dnbAway ? `DNB — ${result.home.team}` : `DNB — ${result.away.team}`,
+    selection: dnbHome >= dnbAway ? `DNB — ${homeTeam}` : `DNB — ${awayTeam}`,
     probability: dnbProbability,
-    confidence: Math.round((result.confidence + pct(dnbProbability)) / 2),
+    confidence: Math.round((confidence + pct(dnbProbability)) / 2),
     tier: dnbProbability >= 0.62 ? "SECONDARY" : "WATCH",
     rationale:
       "Draw is removed from the win comparison and the stronger side becomes the DNB lean.",
@@ -107,19 +112,22 @@ export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): Ma
  */
 export function bestQualifiedMarket(result: AuthoritativeMatchAnalysis): MarketSignal {
   const markets = buildMainstreamMarketMap(result);
+  const quality = result?.quality ?? 50;
+  const risk = result?.risk ?? "MODERATE";
+  const robustnessScore = result?.robustness?.score ?? 50;
   const candidates = markets.filter((m) => {
     const minProbability =
       m.market === "OVER/UNDER 1.5" ? 0.64 : m.market === "DOUBLE CHANCE" ? 0.62 : 0.57;
-    return m.probability >= minProbability && result.quality >= 40 && result.risk !== "VERY HIGH";
+    return m.probability >= minProbability && quality >= 40 && risk !== "VERY HIGH";
   });
-  const riskPenalty = result.risk === "VERY HIGH" ? 0.25 : result.risk === "HIGH" ? 0.1 : 0;
+  const riskPenalty = risk === "VERY HIGH" ? 0.25 : risk === "HIGH" ? 0.1 : 0;
   const pool = candidates.length ? candidates : markets.filter((m) => m.market !== "1X2");
   const ranked = pool.sort((a, b) => {
     const score = (m: MarketSignal) =>
       m.probability * 0.45 +
       (m.confidence / 100) * 0.25 +
-      (result.robustness.score / 100) * 0.15 +
-      (result.quality / 100) * 0.15 -
+      (robustnessScore / 100) * 0.15 +
+      (quality / 100) * 0.15 -
       riskPenalty;
     return score(b) - score(a);
   });
