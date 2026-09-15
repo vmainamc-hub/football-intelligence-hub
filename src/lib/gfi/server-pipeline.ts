@@ -10,6 +10,7 @@ export type AnalysisPipelineTrace = {
   competitionsLoaded: number;
   historicalRowsLoaded: number;
   targetCompetitionRows: number;
+  modelContextRows: number;
   homeRowsMatched: number;
   awayRowsMatched: number;
   homeSample: number;
@@ -17,6 +18,7 @@ export type AnalysisPipelineTrace = {
   h2hSample: number;
   enginesRun: string[];
   evidenceMode: "TARGET_COMPETITION" | "GLOBAL_CONTEXT" | "LIMITED";
+  modelContext: "TARGET_COMPETITION_PLUS_TEAM_CONTEXT" | "TEAM_CONTEXT" | "LIMITED";
   simulation: {
     iterations: number;
     homeWin: number;
@@ -26,7 +28,9 @@ export type AnalysisPipelineTrace = {
   };
   generatedAt: string;
 };
+
 export type ServerMatchAnalysis = AuthoritativeMatchAnalysis & { pipeline: AnalysisPipelineTrace };
+
 const normalizeName = (v: string) =>
   v
     .normalize("NFD")
@@ -42,6 +46,7 @@ const dateKey = (v: string) => {
   const y = m[3].length === 2 ? Number(m[3]) + 2000 : Number(m[3]);
   return `${y.toString().padStart(4, "0")}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
 };
+
 const prepare = (f: MatchRow, r: MatchRow[]) =>
   r
     .filter((x) => x.hg !== undefined && x.ag !== undefined && dateKey(x.date) < dateKey(f.date))
@@ -53,6 +58,7 @@ const prepare = (f: MatchRow, r: MatchRow[]) =>
     .sort((a, b) =>
       `${dateKey(a.date)} ${a.time ?? ""}`.localeCompare(`${dateKey(b.date)} ${b.time ?? ""}`),
     );
+
 const dedupe = (r: MatchRow[]) => {
   const s = new Set<string>();
   return r.filter((x) => {
@@ -62,29 +68,63 @@ const dedupe = (r: MatchRow[]) => {
     return true;
   });
 };
+
+/**
+ * The model should not consume every historical row equally. Use the target
+ * competition as the primary context, then supplement it with broader history
+ * involving the two teams. This prevents unrelated leagues from dominating
+ * the prediction while preserving enough rows for global-model calibration.
+ */
+const buildModelContext = (
+  fixture: MatchRow,
+  target: MatchRow[],
+  all: MatchRow[],
+  mode: AnalysisPipelineTrace["evidenceMode"],
+) => {
+  const targetSet = new Set(
+    target.map(
+      (x) => `${dateKey(x.date)}|${normalizeName(x.home)}|${normalizeName(x.away)}|${x.hg}|${x.ag}`,
+    ),
+  );
+  const teamContext = all.filter(
+    (x) => sameTeam(x.home, fixture.home) || sameTeam(x.away, fixture.home) || sameTeam(x.home, fixture.away) || sameTeam(x.away, fixture.away),
+  );
+
+  if (mode === "TARGET_COMPETITION") {
+    return dedupe([
+      ...target,
+      ...teamContext.filter(
+        (x) => !targetSet.has(`${dateKey(x.date)}|${normalizeName(x.home)}|${normalizeName(x.away)}|${x.hg}|${x.ag}`),
+      ),
+    ]).slice(-900);
+  }
+  if (mode === "GLOBAL_CONTEXT") return dedupe(teamContext).slice(-360);
+  return dedupe(teamContext).slice(-120);
+};
+
 export function analyzeLoadedFixture(
   fixture: MatchRow,
   code: string,
   groups: FreeLeague[],
 ): ServerMatchAnalysis {
   const group =
-      groups.find((g) => g.code === code) || groups.find((g) => g.league === fixture.league),
-    target = prepare(fixture, group?.matches ?? []),
-    all = dedupe(
-      prepare(
-        fixture,
-        groups.flatMap((g) => g.matches),
-      ),
-    ),
-    home = all.filter((x) => sameTeam(x.home, fixture.home) || sameTeam(x.away, fixture.home)),
-    away = all.filter((x) => sameTeam(x.home, fixture.away) || sameTeam(x.away, fixture.away)),
-    mode: AnalysisPipelineTrace["evidenceMode"] =
-      Math.min(home.length, away.length) >= 8
-        ? "TARGET_COMPETITION"
-        : Math.min(home.length, away.length) >= 4
-          ? "GLOBAL_CONTEXT"
-          : "LIMITED";
-  const result = analyzeActiveAuthoritatively({ ...fixture }, all);
+    groups.find((g) => g.code === code) || groups.find((g) => g.league === fixture.league);
+  const target = prepare(fixture, group?.matches ?? []);
+  const all = dedupe(prepare(fixture, groups.flatMap((g) => g.matches)));
+  const home = all.filter((x) => sameTeam(x.home, fixture.home) || sameTeam(x.away, fixture.home));
+  const away = all.filter((x) => sameTeam(x.home, fixture.away) || sameTeam(x.away, fixture.away));
+  const mode: AnalysisPipelineTrace["evidenceMode"] =
+    Math.min(
+      target.filter((x) => sameTeam(x.home, fixture.home) || sameTeam(x.away, fixture.home)).length,
+      target.filter((x) => sameTeam(x.home, fixture.away) || sameTeam(x.away, fixture.away)).length,
+    ) >= 8
+      ? "TARGET_COMPETITION"
+      : Math.min(home.length, away.length) >= 4
+        ? "GLOBAL_CONTEXT"
+        : "LIMITED";
+
+  const modelRows = buildModelContext(fixture, target, all, mode);
+  const result = analyzeActiveAuthoritatively({ ...fixture }, modelRows);
   const existingSim = result.engines.find((e) => e.id === "SIMULATION");
   const sim =
     existingSim && result.aiReasoningPacket?.simulation
@@ -94,6 +134,7 @@ export function analyzeLoadedFixture(
     ? result.engines
     : [...result.engines, sim.engine];
   const generatedAt = new Date().toISOString();
+
   return {
     ...result,
     engines,
@@ -111,6 +152,7 @@ export function analyzeLoadedFixture(
       competitionsLoaded: groups.length,
       historicalRowsLoaded: all.length,
       targetCompetitionRows: target.length,
+      modelContextRows: modelRows.length,
       homeRowsMatched: home.length,
       awayRowsMatched: away.length,
       homeSample: result.home.played,
@@ -118,6 +160,12 @@ export function analyzeLoadedFixture(
       h2hSample: result.engines.find((e) => e.id === "H2H")?.values.matches ?? 0,
       enginesRun: engines.map((e) => e.id),
       evidenceMode: mode,
+      modelContext:
+        mode === "TARGET_COMPETITION"
+          ? "TARGET_COMPETITION_PLUS_TEAM_CONTEXT"
+          : mode === "GLOBAL_CONTEXT"
+            ? "TEAM_CONTEXT"
+            : "LIMITED",
       simulation: {
         iterations: sim.summary.iterations,
         homeWin: sim.summary.homeWin,
