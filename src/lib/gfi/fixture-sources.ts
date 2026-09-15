@@ -1,8 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { MatchRow } from "./intelligence";
 import { canonicalCompetitionName, canonicalTeamName, parseScoreCell } from "./identity";
+import { fetchEspnFixtures } from "./espn-sources";
 
-export type FixtureSourceName = "football-data" | "openfootball" | "sportsdb";
+export type FixtureSourceName = "football-data" | "openfootball" | "sportsdb" | "espn";
 export type ExternalFixture = MatchRow & {
   source: FixtureSourceName;
   sourceId?: string;
@@ -169,8 +170,18 @@ export const fetchGlobalFallbackFixtures = createServerFn({ method: "GET" })
     for (const result of openfootball)
       if (result.status === "fulfilled") results.push(...result.value);
 
-    const sportsDb = await collectSportsDb(data.dateFrom, data.dateTo);
+    const [sportsDb, espn] = await Promise.all([
+      collectSportsDb(data.dateFrom, data.dateTo),
+      fetchEspnFixtures(data.dateFrom, data.dateTo),
+    ]);
     results.push(...sportsDb);
+    results.push(
+      ...espn.map((m) => ({
+        ...m,
+        source: "espn" as const,
+        sourceUpdatedAt: new Date().toISOString(),
+      } satisfies ExternalFixture)),
+    );
 
     const seen = new Set<string>();
     return results.filter((match) => {
