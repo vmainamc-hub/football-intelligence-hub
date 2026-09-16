@@ -123,14 +123,30 @@ export async function runMatchAnalysis(
   );
   analysis.pipeline.competitionsLoaded = expandedGroups.length;
 
-  // Actionability is deliberately downstream of the single authoritative engine.
-  // It does not create a second prediction model: it compares the authoritative
-  // market candidates by cross-engine support and chooses one actionable market.
+  // Actionability is downstream of the single authoritative engine. It never
+  // creates a second prediction model: it audits the market candidates against
+  // the probability-producing engine families and selects the strongest
+  // cross-engine-supported market rather than the lowest-odds/safest line.
   const actionable = deriveConsensusActionability(analysis);
   analysis.qualification = actionable;
   analysis.finalPrediction = actionable.actionableMarket?.selection ?? analysis.finalPrediction;
+
+  // The 1X2 decision is kept as a directional statement only when the chosen
+  // actionable market is itself 1X2. A totals/BTTS/DC action must not masquerade
+  // as a home/draw/away call.
+  const actionSelection = actionable.actionableMarket?.selection ?? "";
+  if (actionable.actionableMarket?.market === "1X2") {
+    if (actionSelection === `${analysis.home.team} Win`) analysis.decision = "HOME EDGE";
+    else if (actionSelection === `${analysis.away.team} Win`) analysis.decision = "AWAY EDGE";
+    else if (actionSelection === "Draw") analysis.decision = "DRAW LEAN";
+  } else {
+    analysis.decision = "NO STRONG EDGE";
+  }
+  analysis.verdict = analysis.decision;
   analysis.aiReasoningPacket = {
     ...analysis.aiReasoningPacket,
+    decision: analysis.decision,
+    finalPrediction: analysis.finalPrediction,
     qualification: actionable,
     actionablePrediction: actionable.actionableMarket,
     actionabilityPolicy:
@@ -138,10 +154,7 @@ export async function runMatchAnalysis(
   };
   if (actionable.actionableMarket) {
     analysis.warnings = [
-      ...new Set([
-        ...analysis.warnings,
-        actionable.statusMessage,
-      ]),
+      ...new Set([...analysis.warnings, actionable.statusMessage]),
     ];
   }
 
