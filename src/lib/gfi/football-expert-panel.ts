@@ -137,37 +137,116 @@ function applyAnalystDecision(analysis: AuthoritativeMatchAnalysis, panel: Footb
   };
 }
 
+function compactEngineDigest(analysis: AuthoritativeMatchAnalysis) {
+  return analysis.engines.map((e) => ({
+    id: e.id,
+    name: e.name,
+    signal: e.signal,
+    confidence: e.confidence,
+    quality: e.quality,
+    version: e.version,
+    probabilities: e.probabilities,
+  })).slice(0, 20);
+}
+
 export async function runFootballExpertPanel(input: PanelInput): Promise<FootballExpertPanel> {
   const key = process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim();
   const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   if (!key) return emptyPanel("UNAVAILABLE", model, "GEMINI_API_KEY/GOOGLE_API_KEY is not configured; the validated quantitative result was retained.", input.analysis);
+
   const { fixture, analysis, evidenceFacts = [] } = input;
   const surface = marketSurface(analysis);
-  const engineDigest = analysis.engines.map((e) => ({ id: e.id, name: e.name, signal: e.signal, confidence: e.confidence, quality: e.quality, version: e.version, values: e.values, probabilities: e.probabilities })).slice(0, 28);
-  const packet = { fixture: { home: fixture.home, away: fixture.away, date: fixture.date, time: fixture.time, competition: fixture.league, competitionCode: fixture.sourceId }, marketSurface: surface, authoritative: { decision: analysis.decision, finalPrediction: analysis.finalPrediction, predictedScore: analysis.predictedScore, risk: analysis.risk, quality: analysis.quality, consensus: analysis.consensus, probabilities: analysis.probabilities, qualification: analysis.qualification }, teams: { home: analysis.home, away: analysis.away }, engines: engineDigest, researchFacts: evidenceFacts.slice(0, 30), evidence: { metrics: analysis.evidenceMetrics, state: analysis.evidenceState, pipeline: (analysis as any).pipeline, warnings: analysis.warnings.slice(0, 15) } };
-  const system = `You are the AI Football Analyst Council inside a serious football-intelligence application. Your job is to reason like an elite multidisciplinary football analysis room, not to mechanically select the largest probability. The supplied deterministic model is the mathematical evidence layer, but the council has analytical authority to select the final football market from the supplied market surface. You MAY select HOME WIN, DRAW, AWAY WIN, BTTS, OVER/UNDER or another listed computed market when the football evidence supports it. You MUST NOT invent a market that is not in marketSurface, alter supplied probabilities, or fabricate injuries, lineups, xG, odds, rankings, transfers, league strengths, news or team facts. If a fact is absent, say UNKNOWN.
+  // Do not send raw engine values/arrays to Gemini. They can be very large and add
+  // latency without adding useful football reasoning signal. The council receives
+  // the already-computed market surface plus compact model-family probabilities.
+  const engineDigest = compactEngineDigest(analysis);
+  const packet = {
+    fixture: {
+      home: fixture.home,
+      away: fixture.away,
+      date: fixture.date,
+      time: fixture.time,
+      competition: fixture.league,
+      competitionCode: fixture.sourceId,
+    },
+    marketSurface: surface,
+    authoritative: {
+      decision: analysis.decision,
+      finalPrediction: analysis.finalPrediction,
+      predictedScore: analysis.predictedScore,
+      risk: analysis.risk,
+      quality: analysis.quality,
+      consensus: analysis.consensus,
+      probabilities: analysis.probabilities,
+      qualification: analysis.qualification,
+    },
+    teams: {
+      home: analysis.home,
+      away: analysis.away,
+    },
+    engines: engineDigest,
+    researchFacts: evidenceFacts.slice(0, 15),
+    evidence: {
+      metrics: analysis.evidenceMetrics,
+      state: analysis.evidenceState,
+      pipeline: (analysis as any).pipeline,
+      warnings: analysis.warnings.slice(0, 10),
+    },
+  };
 
-Council roles (all must contribute): 1) Team Strength Scout — true relative strength, opponent quality, cross-competition distortion, attack/defence level, venue strength. 2) Tactical Analyst — style matchup, pressing, transitions, defensive structure, game-state implications. 3) Statistical Analyst — interrogates quantitative probabilities, calibration, score distribution and model agreement. 4) Form & Trajectory Analyst — separates sustainable performance from noisy recent results and schedule effects. 5) Context & Motivation Analyst — only uses supplied current context; never invents motivation. 6) Competition Strength Analyst — checks competition labels and whether cross-league priors could distort the result. 7) Data Forensic Analyst — hunts identity mismatch, contamination, duplicate evidence, sparse samples and contradictions. 8) Contrarian Analyst — constructs the strongest credible counter-case.
+  const system = `You are the AI Football Analyst Council inside a serious football-intelligence application. Reason like an elite multidisciplinary football analysis room, not a probability sorter. The deterministic model is the mathematical evidence layer, but the council has analytical authority to select the final football market from the supplied market surface.
 
-Process: FIRST verify fixture identity and competition. SECOND assess team strength before interpreting raw form. THIRD interrogate the complete market surface. FOURTH debate the strongest disagreement. FIFTH Chair decides the most informative football conclusion, not automatically the safest market. A high-probability safe market may be rejected in favor of a directional outcome when the council has a defensible football reason. Conversely, do not force a winner when the evidence genuinely supports goals/BTTS instead. The final call must be exactly one selection from marketSurface. Never use an invented probability for the AI call. Conviction is qualitative and means strength of analytical evidence, not event probability.
+You may select HOME WIN, DRAW, AWAY WIN, BTTS, OVER/UNDER, DNB, DOUBLE CHANCE or another listed computed market when supported. You MUST NOT invent a market, alter supplied probabilities, or fabricate injuries, lineups, xG, odds, rankings, transfers, league strengths, news or team facts. If a fact is absent, say UNKNOWN.
 
-Guardrails: identity FAIL or severe data contamination => REVALIDATE and retain quantitative result as fallback. Identity PASS/WARN with coherent evidence => council may select any supported computed market. Limited evidence does not automatically force NO_TRADE; label evidence quality honestly. Do not majority-vote mechanically: the Chair weighs evidence quality, specialist expertise, contradiction severity and football plausibility. Return JSON only. Include exactly eight panel experts, a debate, Chair synthesis, and analystCall.`;
-  const user = `Run the complete council on this fixture. The central question is: what is the strongest football conclusion, even if it is NOT the highest raw probability market? The council must be willing to choose Home Win, Draw or Away Win when team-strength/tactical/context evidence makes that the more informative conclusion. Conversely, it must be willing to choose goals/BTTS when direction is not sufficiently supported. Market surface is the legal action space.\n\nPACKET:\n${JSON.stringify(packet)}`;
+Eight roles must contribute: Team Strength Scout; Tactical Analyst; Statistical Analyst; Form & Trajectory Analyst; Context & Motivation Analyst; Competition Strength Analyst; Data Forensic Analyst; Contrarian Analyst.
+
+Process: verify fixture identity and competition; assess relative team strength and opponent quality; interrogate the complete market surface; debate the strongest disagreement; then have the Chair choose the most informative football conclusion rather than automatically choosing the safest market. A high-probability safe market may be rejected for a directional outcome when supported. Conversely, do not force a winner when goals/BTTS is better supported.
+
+Guardrails: identity FAIL or severe contamination => REVALIDATE and retain the quantitative result as fallback. Identity PASS/WARN with coherent evidence permits any supported computed market. Limited evidence does not automatically mean NO_TRADE. Do not majority-vote mechanically; weigh evidence quality, specialist expertise, contradiction severity and football plausibility.
+
+Return JSON only. Exactly eight panel experts. Keep each expert assessment concise, use at most two evidence bullets per expert, keep debate to at most four exchanges, and keep the Chair synthesis concise. The final analystCall.selection must exactly match one selection from marketSurface. Conviction is qualitative, not event probability.`;
+
+  const user = `Determine the strongest football conclusion for this fixture, even if it is NOT the highest raw probability market. The council must be willing to choose Home Win, Draw or Away Win when team-strength/tactical/context evidence makes that more informative, and must be willing to choose goals/BTTS when direction is not sufficiently supported.\n\nPACKET:\n${JSON.stringify(packet)}`;
+
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25_000);
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: user }] }], generationConfig: { responseMimeType: "application/json", thinkingConfig: { thinkingLevel: "high" } } }), signal: controller.signal });
+    // High thinking was combined with a 25s hard cutoff. Gemini documentation notes
+    // that high thinking can take significantly longer. Medium is the production
+    // default for 3.8 Flash and is appropriate for this structured council task.
+    const timeout = setTimeout(() => controller.abort(), 45_000);
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ role: "user", parts: [{ text: user }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          thinkingConfig: { thinkingLevel: "medium" },
+        },
+      }),
+      signal: controller.signal,
+    });
     clearTimeout(timeout);
-    if (!response.ok) return emptyPanel("ERROR", model, `Gemini council request failed with HTTP ${response.status}; quantitative analysis was preserved.`, analysis);
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => "");
+      const detail = errorBody.replace(/\s+/g, " ").slice(0, 240);
+      return emptyPanel("ERROR", model, `Gemini council request failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}; quantitative analysis was preserved.`, analysis);
+    }
+
     const body = await response.json() as any;
     const rawText = body?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).filter(Boolean).join("\n") ?? "";
     if (!rawText) return emptyPanel("ERROR", model, "Gemini returned no council content; quantitative analysis was preserved.", analysis);
+
     const parsed = JSON.parse(rawText.replace(/^```json\s*/i, "").replace(/\s*```$/i, ""));
     const panel = cleanPanel(parsed, model, analysis);
     applyAnalystDecision(analysis, panel);
     return panel;
   } catch (error) {
-    const message = error instanceof Error && error.name === "AbortError" ? "Gemini football council timed out after 25 seconds." : "Gemini football council failed safely.";
+    const message = error instanceof Error && error.name === "AbortError"
+      ? "Gemini football council timed out after 45 seconds."
+      : `Gemini football council failed safely${error instanceof Error && error.message ? `: ${error.message.slice(0, 180)}` : "."}`;
     return emptyPanel("ERROR", model, message, analysis);
   }
 }
