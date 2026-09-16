@@ -36,6 +36,21 @@ export type TeamSnapshot = {
   points: number;
   homeOrAwayRate: number;
   recent: string[];
+  adaptive?: {
+    halfLifeDays: number;
+    effectiveSample: number;
+    recencyWeightPct: number;
+    currentSeasonSharePct: number;
+    venueSharePct: number;
+    opponentStrength: number;
+    regimeStatus: "ACCELERATING" | "SHIFTING" | "STABLE" | "UNSTABLE";
+    regimeShiftScore: number;
+    currentFormPPG: number;
+    historicalFormPPG: number;
+    currentGoalDiff: number;
+    historicalGoalDiff: number;
+    shrinkagePct: number;
+  };
 };
 
 export type IntelligenceResult = {
@@ -247,8 +262,6 @@ async function loadFreeFixturesInternal(): Promise<FreeLeague[]> {
     loaded = cachedLoadedGroups.map((g) => ({ ...g, matches: [...g.matches] }));
   }
   if (!loaded.length) {
-    // If external CSV backbone is temporarily unreachable, instantiate placeholder league groups
-    // so global discovery and universal sources can still attach and not crash the pipeline
     loaded = entries.map(([code, league]) => ({
       league,
       code,
@@ -303,16 +316,8 @@ function ukOffsetHours(key: string) {
   return key >= start && key < end ? 2 : 3;
 }
 function sourceToKenyaOffsetHours(source: string | undefined, dateKey: string): number {
-  if (source === "betika") {
-    // Betika times are published in Kenya time (EAT = UTC+3)
-    return 0;
-  }
-  if (source === "football-data") {
-    // Football-Data CSV times are UK local times (GMT in winter = UTC+3 to EAT; BST in summer = UTC+2 to EAT)
-    return ukOffsetHours(dateKey);
-  }
-  // ESPN, SportScore, TheSportsDB, OpenFootball provide UTC times.
-  // Kenya is UTC+3, so the offset from UTC to Kenya EAT is +3 hours.
+  if (source === "betika") return 0;
+  if (source === "football-data") return ukOffsetHours(dateKey);
   return 3;
 }
 
