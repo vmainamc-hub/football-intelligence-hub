@@ -121,8 +121,14 @@ const validCouncilPayload = {
     flags: [],
   },
   panel: [
-    { role: "Team Strength Scout", name: "Scout 1", stance: "HOME", assessment: "Arsenal clear edge.", evidence: [], concern: "None", question: "None" },
-    { role: "Tactical Analyst", name: "Tactician", stance: "HOME", assessment: "Dominant pressing setup.", evidence: [], concern: "None", question: "None" },
+    { role: "Team Strength Scout", name: "Team Strength Scout", stance: "HOME", assessment: "Arsenal clear opponent-adjusted strength advantage over Chelsea.", evidence: [], concern: "None", question: "None" },
+    { role: "Tactical Analyst", name: "Tactical Analyst", stance: "HOME", assessment: "Dominant pressing setup and wing overload dominance.", evidence: [], concern: "None", question: "None" },
+    { role: "Statistical Analyst", name: "Statistical Analyst", stance: "HOME", assessment: "Directional 1X2 market edge carries higher informational value.", evidence: [], concern: "None", question: "None" },
+    { role: "Form & Trajectory Analyst", name: "Form & Trajectory Analyst", stance: "HOME", assessment: "Arsenal accelerating form trajectory; Chelsea struggling away.", evidence: [], concern: "None", question: "None" },
+    { role: "Context & Motivation Analyst", name: "Context & Motivation Analyst", stance: "HOME", assessment: "Full rest cycle; key starters fit with no rotation required.", evidence: [], concern: "None", question: "None" },
+    { role: "Competition Strength Analyst", name: "Competition Strength Analyst", stance: "HOME", assessment: "Domestic Premier League matchup verified with consistent opponent tiering.", evidence: [], concern: "None", question: "None" },
+    { role: "Data Forensic Analyst", name: "Data Forensic Analyst", stance: "HOME", assessment: "Data verified without distortion, duplicate records, or mapping errors.", evidence: [], concern: "None", question: "None" },
+    { role: "Contrarian Analyst", name: "Contrarian Analyst", stance: "HOME", assessment: "Over 1.5 Goals is overly broad; Home Win provides actual decisive football signal.", evidence: [], concern: "None", question: "None" },
   ],
   debate: [],
   chair: {

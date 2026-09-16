@@ -120,14 +120,14 @@ const basePayload = {
     flags: [],
   },
   panel: [
-    { role: "Team Strength Scout", name: "Strength Scout", stance: "HOME", assessment: "Arsenal clear strength advantage.", evidence: [], concern: "None", question: "None" },
-    { role: "Tactical Analyst", name: "Tactician", stance: "HOME", assessment: "Tactical matchup heavily favors home wing overloads.", evidence: [], concern: "None", question: "None" },
-    { role: "Statistical Analyst", name: "Stats Lead", stance: "HOME", assessment: "1X2 edge is sharper than safe non-directional totals.", evidence: [], concern: "None", question: "None" },
-    { role: "Form & Trajectory Analyst", name: "Form Scout", stance: "HOME", assessment: "Arsenal accelerating; Chelsea struggling on the road.", evidence: [], concern: "None", question: "None" },
-    { role: "Context & Motivation Analyst", name: "Context Scout", stance: "HOME", assessment: "Full rest; no key rotation.", evidence: [], concern: "None", question: "None" },
-    { role: "Competition Strength Analyst", name: "Comp Analyst", stance: "HOME", assessment: "Domestic Premier League matchup verified.", evidence: [], concern: "None", question: "None" },
-    { role: "Data Forensic Analyst", name: "Forensic Lead", stance: "HOME", assessment: "Data verified without distortion.", evidence: [], concern: "None", question: "None" },
-    { role: "Contrarian Analyst", name: "Devil's Advocate", stance: "HOME", assessment: "Over 1.5 Goals is overly broad; Home Win provides actual football signal.", evidence: [], concern: "None", question: "None" },
+    { role: "Team Strength Scout", name: "Team Strength Scout", stance: "HOME", assessment: "Arsenal clear opponent-adjusted strength advantage over Chelsea.", evidence: ["Goal differential +1.2 per 90"], concern: "None", question: "None" },
+    { role: "Tactical Analyst", name: "Tactical Analyst", stance: "HOME", assessment: "Tactical matchup heavily favors home wing overloads and high pressing traps.", evidence: ["High recovery zone dominance"], concern: "None", question: "None" },
+    { role: "Statistical Analyst", name: "Statistical Analyst", stance: "HOME", assessment: "1X2 directional edge carries higher informational value than safe totals.", evidence: ["Poisson distribution home win lean"], concern: "None", question: "None" },
+    { role: "Form & Trajectory Analyst", name: "Form & Trajectory Analyst", stance: "HOME", assessment: "Arsenal accelerating form trajectory; Chelsea struggling away from home.", evidence: ["W-W-W vs L-D-L in last 3"], concern: "None", question: "None" },
+    { role: "Context & Motivation Analyst", name: "Context & Motivation Analyst", stance: "HOME", assessment: "Full rest cycle; key starters fit with no rotation required.", evidence: ["7 days rest"], concern: "None", question: "None" },
+    { role: "Competition Strength Analyst", name: "Competition Strength Analyst", stance: "HOME", assessment: "Domestic Premier League matchup verified with consistent opponent tiering.", evidence: ["Premier League tier 1"], concern: "None", question: "None" },
+    { role: "Data Forensic Analyst", name: "Data Forensic Analyst", stance: "HOME", assessment: "Data verified without distortion, duplicate records, or mapping errors.", evidence: ["Entity ID confirmed"], concern: "None", question: "None" },
+    { role: "Contrarian Analyst", name: "Contrarian Analyst", stance: "HOME", assessment: "Over 1.5 Goals is overly broad; Home Win provides actual decisive football signal.", evidence: ["82% totals vs 58% directional"], concern: "None", question: "None" },
   ],
   debate: [
     { speaker: "Contrarian Analyst", challenges: "Why not take safe Over 1.5 Goals at 82%?", response: "Because Arsenal Home Win at 58% carries decisive football edge and team-strength disparity." }
@@ -141,43 +141,108 @@ const basePayload = {
     severity: "NORMAL",
     revalidationReason: "",
   },
+  analystCall: {
+    status: "ACTIVE",
+    selection: "Arsenal Win",
+    callType: "HOME_WIN",
+    conviction: "HIGH",
+    evidenceQuality: "STRONG",
+    rationale: "Clear opponent-adjusted strength gap and home venue control.",
+    divergenceReasonCode: "OPPONENT_ADJUSTED_STRENGTH_GAP",
+    divergenceReason: "Directional home edge is more informative than non-directional totals.",
+    safeAlternative: "Over 1.5 Goals",
+  },
+  marketReview: {
+    quantitativeLeader: "Over 1.5 Goals",
+    selectedMarket: "Arsenal Win",
+    safeAlternative: "Over 1.5 Goals",
+    panelView: "Directional home win prioritized over safe totals.",
+    alternatives: ["Over 1.5 Goals"],
+  },
 };
 
-test("1. High-probability Over 1.5 market can be challenged", () => {
+test("1. all eight specialists present: complete council validates as ACTIVE", () => {
+  const analysis = createMockAnalysis();
+  const { panel, completeness, rejectedAnything } = cleanPanel(basePayload, "gemini-3.6-flash", analysis);
+  assert.equal(completeness.isComplete, true);
+  assert.equal(panel.status, "ACTIVE");
+  assert.equal(panel.executionState, "AVAILABLE");
+  assert.equal(panel.panel.length, 8);
+  assert.equal(rejectedAnything, false);
+});
+
+test("2. missing specialist rejected: missing one specialist invalidates council", () => {
   const analysis = createMockAnalysis();
   const raw = {
     ...basePayload,
-    analystCall: {
-      status: "ACTIVE",
-      market: "1X2",
-      selection: "Arsenal Win",
-      callType: "HOME_WIN",
-      rationale: "Arsenal home dominance provides higher football informational value than raw Over 1.5 Goals.",
-      conviction: "HIGH",
-      evidenceQuality: "GOOD",
-      divergenceFromQuantitativeLeader: true,
-      divergenceReasonCode: "DIRECTIONAL_SIGNAL_STRONGER_THAN_SAFE_TOTAL",
-      divergenceReason: "Directional strength signal is more informative than the broad totals outcome.",
-      safeAlternative: "Over 1.5 Goals",
-    },
-    marketReview: {
-      quantitativeLeader: "Over 1.5 Goals",
-      selectedMarket: "Arsenal Win",
-      safeAlternative: "Over 1.5 Goals",
-      panelView: "Directional home win prioritized over safe totals.",
-      alternatives: ["Over 1.5 Goals"],
-    },
+    panel: basePayload.panel.filter((s) => s.role !== "Contrarian Analyst"),
   };
-
-  const { panel, rejectedAnything } = cleanPanel(raw, "gemini-3.6-flash", analysis);
-  assert.equal(rejectedAnything, false);
-  assert.equal(panel.analystCall.selection, "Arsenal Win");
-  assert.equal(panel.analystCall.divergenceFromQuantitativeLeader, true);
-  assert.equal(panel.analystCall.divergenceReasonCode, "DIRECTIONAL_SIGNAL_STRONGER_THAN_SAFE_TOTAL");
-  assert.equal(panel.analystCall.safeAlternative, "Over 1.5 Goals");
+  const { panel, completeness, rejectedAnything } = cleanPanel(raw, "gemini-3.6-flash", analysis);
+  assert.equal(completeness.isComplete, false);
+  assert.equal(completeness.missingSpecialists.includes("Contrarian Analyst"), true);
+  assert.equal(panel.status, "UNAVAILABLE");
+  assert.equal(panel.divergenceState, "INCOMPLETE");
+  assert.equal(rejectedAnything, true);
+  assert.equal(panel.analystCall.status, "FALLBACK");
 });
 
-test("2. The AI can legitimately select Home Win", () => {
+test("3. empty specialist rejected: placeholder or empty assessment invalidates council", () => {
+  const analysis = createMockAnalysis();
+  const raw = {
+    ...basePayload,
+    panel: basePayload.panel.map((s) =>
+      s.role === "Tactical Analyst" ? { ...s, assessment: "None" } : s,
+    ),
+  };
+  const { panel, completeness, rejectedAnything } = cleanPanel(raw, "gemini-3.6-flash", analysis);
+  assert.equal(completeness.isComplete, false);
+  assert.equal(completeness.missingSpecialists.includes("Tactical Analyst"), true);
+  assert.equal(panel.status, "UNAVAILABLE");
+  assert.equal(panel.divergenceState, "INCOMPLETE");
+  assert.equal(rejectedAnything, true);
+});
+
+test("4. Chair cannot run without specialists: SUPPORT decision without specialists fails", () => {
+  const analysis = createMockAnalysis();
+  const raw = {
+    ...basePayload,
+    panel: [], // No specialists
+    chair: {
+      summary: "I decide Arsenal Win despite no specialists being present.",
+      decision: "SUPPORT",
+      severity: "NORMAL",
+      strongestCase: "None",
+      strongestCountercase: "None",
+      unresolvedQuestion: "None",
+      revalidationReason: "",
+    },
+  };
+  const { panel, completeness } = cleanPanel(raw, "gemini-3.6-flash", analysis);
+  assert.equal(completeness.isComplete, false);
+  assert.equal(panel.status, "UNAVAILABLE");
+  assert.equal(panel.divergenceState, "INCOMPLETE");
+  const res = applyAnalystDecision(analysis, panel);
+  assert.equal(res.applied, false);
+  assert.equal(analysis.finalPrediction, "Over 1.5 Goals");
+});
+
+test("5. Contrarian challenge always present on panel output", () => {
+  const analysis = createMockAnalysis();
+  const { panel } = cleanPanel(basePayload, "gemini-3.6-flash", analysis);
+  assert.ok(panel.contrarianChallenge);
+  assert.ok(panel.contrarianChallenge.challengeQuestion.length > 0);
+  assert.ok(panel.contrarianChallenge.evidenceForAlternative.length > 0);
+  assert.ok(panel.contrarianChallenge.verdict);
+});
+
+test("6. quantitative leader explicitly challenged by Contrarian", () => {
+  const analysis = createMockAnalysis();
+  const { panel } = cleanPanel(basePayload, "gemini-3.6-flash", analysis);
+  assert.equal(panel.contrarianChallenge?.quantitativeLeaderChallenged, "Over 1.5 Goals");
+  assert.match(panel.contrarianChallenge?.challengeQuestion || "", /Over 1\.5 Goals/);
+});
+
+test("7. Home Win selection: AI can legitimately select Home Win", () => {
   const analysis = createMockAnalysis();
   const raw = {
     ...basePayload,
@@ -192,38 +257,15 @@ test("2. The AI can legitimately select Home Win", () => {
       safeAlternative: "Over 1.5 Goals",
     },
   };
-
   const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
   const res = applyAnalystDecision(analysis, panel);
   assert.equal(res.applied, true);
   assert.equal(analysis.finalPrediction, "Arsenal Win");
   assert.equal(analysis.decision, "HOME EDGE");
+  assert.equal(panel.divergenceState, "DIVERGE");
 });
 
-test("3. The AI can legitimately select Draw", () => {
-  const analysis = createMockAnalysis();
-  const raw = {
-    ...basePayload,
-    analystCall: {
-      status: "ACTIVE",
-      selection: "Draw",
-      callType: "DRAW",
-      conviction: "MODERATE",
-      evidenceQuality: "GOOD",
-      rationale: "Two low-variance sides with matched defensive blocks.",
-      divergenceReasonCode: "DIRECTIONAL_SIGNAL_STRONGER_THAN_SAFE_TOTAL",
-      safeAlternative: "Over 1.5 Goals",
-    },
-  };
-
-  const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
-  const res = applyAnalystDecision(analysis, panel);
-  assert.equal(res.applied, true);
-  assert.equal(analysis.finalPrediction, "Draw");
-  assert.equal(analysis.decision, "DRAW LEAN");
-});
-
-test("4. The AI can legitimately select Away Win", () => {
+test("8. Away Win selection: AI can legitimately select Away Win", () => {
   const analysis = createMockAnalysis();
   const raw = {
     ...basePayload,
@@ -233,20 +275,43 @@ test("4. The AI can legitimately select Away Win", () => {
       callType: "AWAY_WIN",
       conviction: "HIGH",
       evidenceQuality: "STRONG",
-      rationale: "Away side exhibits superior recent trajectory and tactical mismatch.",
+      rationale: "Away side exhibits superior recent trajectory and tactical counter-pressing.",
       divergenceReasonCode: "RECENT_TRAJECTORY_OVERRIDES_LONG_TERM_BASELINE",
       safeAlternative: "Over 1.5 Goals",
     },
   };
-
   const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
   const res = applyAnalystDecision(analysis, panel);
   assert.equal(res.applied, true);
   assert.equal(analysis.finalPrediction, "Chelsea Win");
   assert.equal(analysis.decision, "AWAY EDGE");
+  assert.equal(panel.divergenceState, "DIVERGE");
 });
 
-test("5. The AI can legitimately select BTTS", () => {
+test("9. Draw selection: AI can legitimately select Draw", () => {
+  const analysis = createMockAnalysis();
+  const raw = {
+    ...basePayload,
+    analystCall: {
+      status: "ACTIVE",
+      selection: "Draw",
+      callType: "DRAW",
+      conviction: "MODERATE",
+      evidenceQuality: "GOOD",
+      rationale: "Two low-variance sides with matched defensive blocks and parity.",
+      divergenceReasonCode: "DIRECTIONAL_SIGNAL_STRONGER_THAN_SAFE_TOTAL",
+      safeAlternative: "Over 1.5 Goals",
+    },
+  };
+  const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
+  const res = applyAnalystDecision(analysis, panel);
+  assert.equal(res.applied, true);
+  assert.equal(analysis.finalPrediction, "Draw");
+  assert.equal(analysis.decision, "DRAW LEAN");
+  assert.equal(panel.divergenceState, "DIVERGE");
+});
+
+test("10. BTTS selection: AI can legitimately select BTTS", () => {
   const analysis = createMockAnalysis();
   const raw = {
     ...basePayload,
@@ -261,16 +326,16 @@ test("5. The AI can legitimately select BTTS", () => {
       safeAlternative: "Over 1.5 Goals",
     },
   };
-
   const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
   const res = applyAnalystDecision(analysis, panel);
   assert.equal(res.applied, true);
   assert.equal(analysis.finalPrediction, "BTTS — YES");
   assert.equal(analysis.decision, "NO STRONG EDGE");
+  assert.equal(panel.divergenceState, "DIVERGE");
   assert.equal(panel.analystCall.divergenceReasonCode, "BTTS_MORE_INFORMATIVE_THAN_GOAL_TOTAL");
 });
 
-test("6. The AI can legitimately select a totals market when directional evidence is weak", () => {
+test("11. Over/Under selection: AI selects totals market when directional evidence is absent", () => {
   const analysis = createMockAnalysis();
   const raw = {
     ...basePayload,
@@ -284,50 +349,57 @@ test("6. The AI can legitimately select a totals market when directional evidenc
       divergenceReasonCode: "NO_DIRECTIONAL_EDGE_RETAINED_TOTALS",
     },
   };
-
   const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
   assert.equal(panel.analystCall.selection, "Over 1.5 Goals");
   assert.equal(panel.analystCall.divergenceFromQuantitativeLeader, false);
-  assert.equal(panel.analystCall.divergenceReasonCode, "NO_DIRECTIONAL_EDGE_RETAINED_TOTALS");
+  assert.equal(panel.divergenceState, "AGREE");
 });
 
-test("7. AI cannot invent a market (must be from marketSurface)", () => {
+test("12. invalid market rejected: AI cannot invent a market outside marketSurface", () => {
   const analysis = createMockAnalysis();
   const raw = {
     ...basePayload,
     analystCall: {
       status: "ACTIVE",
-      selection: "Arsenal to win 5-0 with 10 corners", // Hallucinated market
+      selection: "Arsenal to win 5-0 with 10 corners", // Hallucinated uncomputed market
       callType: "OTHER",
       rationale: "Invented fantasy market.",
     },
   };
-
   const { panel, rejectedAnything } = cleanPanel(raw, "gemini-3.6-flash", analysis);
   assert.equal(rejectedAnything, true);
-  // Reverted to top of marketSurface (Over 1.5 Goals)
   assert.equal(panel.analystCall.selection, "Over 1.5 Goals");
 });
 
-test("8. AI cannot invent probability (quantitative probabilities remain untouched)", () => {
+test("13. quantitative probability unchanged: quantitative probabilities remain untouched", () => {
   const analysis = createMockAnalysis();
-  const raw = {
-    ...basePayload,
-    analystCall: {
-      status: "ACTIVE",
-      selection: "Arsenal Win",
-      quantitativeProbability: 99.9, // Attempted fabricated probability
-      rationale: "Fabricated probability injection attempt.",
-    },
-  };
+  const origHomeProb = analysis.probabilities.home;
+  const origDrawProb = analysis.probabilities.draw;
+  const origAwayProb = analysis.probabilities.away;
+  const origCandidates = JSON.stringify(analysis.marketCandidates);
 
-  const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
-  // Probability is strictly taken from the mathematical model candidate row (58%)
-  assert.equal(panel.analystCall.quantitativeProbability, 58);
-  assert.equal(panel.analystCall.quantitativeLeaderProbability, 82);
+  const { panel } = cleanPanel(basePayload, "gemini-3.6-flash", analysis);
+  applyAnalystDecision(analysis, panel);
+
+  assert.equal(analysis.probabilities.home, origHomeProb);
+  assert.equal(analysis.probabilities.draw, origDrawProb);
+  assert.equal(analysis.probabilities.away, origAwayProb);
+  assert.equal(JSON.stringify(analysis.marketCandidates), origCandidates);
 });
 
-test("9. Strong identity failure blocks unsafe AI override", () => {
+test("14. safe alternative preserved: quantitative leader retained as safeAlternative on divergence", () => {
+  const analysis = createMockAnalysis();
+  const { panel } = cleanPanel(basePayload, "gemini-3.6-flash", analysis);
+  assert.equal(panel.analystCall.selection, "Arsenal Win");
+  assert.equal(panel.analystCall.safeAlternative, "Over 1.5 Goals");
+  assert.equal(panel.marketReview.safeAlternative, "Over 1.5 Goals");
+
+  applyAnalystDecision(analysis, panel);
+  assert.equal(analysis.aiReasoningPacket?.safeAlternative, "Over 1.5 Goals");
+  assert.equal(analysis.aiReasoningPacket?.quantitativeLeaderBeforeAI, "Over 1.5 Goals");
+});
+
+test("15. identity failure blocks AI application: FAIL status blocks override", () => {
   const analysis = createMockAnalysis();
   const raw = {
     ...basePayload,
@@ -338,88 +410,80 @@ test("9. Strong identity failure blocks unsafe AI override", () => {
       competitionConfidence: 5,
       notes: ["Team entity could not be mapped to any known league."],
     },
-    analystCall: {
-      status: "ACTIVE",
-      selection: "Arsenal Win",
-      rationale: "Override despite entity failure.",
-    },
   };
-
   const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
   const res = applyAnalystDecision(analysis, panel);
   assert.equal(res.applied, false);
   assert.match(res.reason, /Identity check status FAIL/);
-  // Final prediction remains the untouched quantitative fallback
   assert.equal(analysis.finalPrediction, "Over 1.5 Goals");
 });
 
-test("10. Quantitative probabilities remain unchanged after AI selection", () => {
-  const analysis = createMockAnalysis();
-  const origHomeProb = analysis.probabilities.home;
-  const origDrawProb = analysis.probabilities.draw;
-  const origAwayProb = analysis.probabilities.away;
-  const origCandidates = JSON.stringify(analysis.marketCandidates);
-
-  const raw = {
-    ...basePayload,
-    analystCall: {
-      status: "ACTIVE",
-      selection: "Arsenal Win",
-      callType: "HOME_WIN",
-      rationale: "Strong football edge.",
-    },
-  };
-
-  const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
-  applyAnalystDecision(analysis, panel);
-
-  assert.equal(analysis.probabilities.home, origHomeProb);
-  assert.equal(analysis.probabilities.draw, origDrawProb);
-  assert.equal(analysis.probabilities.away, origAwayProb);
-  assert.equal(JSON.stringify(analysis.marketCandidates), origCandidates);
-});
-
-test("11. Safe alternative remains the quantitative leader when AI diverges", () => {
+test("16. Chair REVALIDATE creates REVALIDATE state and preserves quantitative baseline", () => {
   const analysis = createMockAnalysis();
   const raw = {
     ...basePayload,
-    analystCall: {
-      status: "ACTIVE",
-      selection: "Arsenal Win",
-      callType: "HOME_WIN",
-      divergenceFromQuantitativeLeader: true,
-      divergenceReasonCode: "DIRECTIONAL_SIGNAL_STRONGER_THAN_SAFE_TOTAL",
-      divergenceReason: "Home win represents the true football edge.",
+    chair: {
+      ...basePayload.chair,
+      decision: "REVALIDATE",
+      severity: "SIGNIFICANT",
+      revalidationReason: "Conflicting evidence between statistical signals and recent injury reports.",
     },
   };
-
   const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
-  assert.equal(panel.analystCall.selection, "Arsenal Win");
-  assert.equal(panel.analystCall.safeAlternative, "Over 1.5 Goals");
-  assert.equal(panel.marketReview.safeAlternative, "Over 1.5 Goals");
+  assert.equal(panel.divergenceState, "REVALIDATE");
+  assert.equal(panel.chair.decision, "REVALIDATE");
 
-  applyAnalystDecision(analysis, panel);
-  assert.equal(analysis.aiReasoningPacket?.safeAlternative, "Over 1.5 Goals");
-  assert.equal(analysis.aiReasoningPacket?.quantitativeLeaderBeforeAI, "Over 1.5 Goals");
+  const res = applyAnalystDecision(analysis, panel);
+  assert.equal(res.applied, false);
+  assert.match(res.reason, /REVALIDATE/);
+  assert.equal(analysis.finalPrediction, "Over 1.5 Goals");
 });
 
-test("12. Single and Batch use the same AI decision layer", () => {
+test("17. incomplete council creates INCOMPLETE state", () => {
+  const analysis = createMockAnalysis();
+  const raw = {
+    ...basePayload,
+    panel: [basePayload.panel[0]], // Only 1 specialist
+  };
+  const { panel, completeness } = cleanPanel(raw, "gemini-3.6-flash", analysis);
+  assert.equal(completeness.isComplete, false);
+  assert.equal(panel.status, "UNAVAILABLE");
+  assert.equal(panel.divergenceState, "INCOMPLETE");
+  assert.equal(panel.analystCall.status, "FALLBACK");
+});
+
+test("18. missing football score does not become 0/100", () => {
+  const analysis = createMockAnalysis();
+  const raw = {
+    ...basePayload,
+    realityCheck: {
+      status: "LIMITED_EVIDENCE",
+      score: undefined,
+      flags: ["No external reality flags triggered."],
+    },
+  };
+  const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
+  assert.equal(panel.realityCheck.score, undefined);
+  assert.notEqual(panel.realityCheck.score, 0);
+  assert.equal(panel.realityCheck.status, "LIMITED_EVIDENCE");
+});
+
+test("19. AI conviction remains separate from probability", () => {
+  const analysis = createMockAnalysis();
+  const { panel } = cleanPanel(basePayload, "gemini-3.6-flash", analysis);
+  // Arsenal Win probability is 58%
+  assert.equal(panel.analystCall.quantitativeProbability, 58);
+  // Conviction is HIGH, not a mathematical 99%
+  assert.equal(panel.analystCall.conviction, "HIGH");
+  assert.notEqual(panel.analystCall.quantitativeProbability, 100);
+});
+
+test("20. Single and Batch use the exact same council decision logic", () => {
   const singleAnalysis = createMockAnalysis();
   const batchAnalysis = createMockAnalysis();
 
-  const raw = {
-    ...basePayload,
-    analystCall: {
-      status: "ACTIVE",
-      selection: "Arsenal Win",
-      callType: "HOME_WIN",
-      conviction: "HIGH",
-      rationale: "Consistent decision application in both single and batch pipelines.",
-    },
-  };
-
-  const { panel: p1 } = cleanPanel(raw, "gemini-3.6-flash", singleAnalysis);
-  const { panel: p2 } = cleanPanel(raw, "gemini-3.6-flash", batchAnalysis);
+  const { panel: p1 } = cleanPanel(basePayload, "gemini-3.6-flash", singleAnalysis);
+  const { panel: p2 } = cleanPanel(basePayload, "gemini-3.6-flash", batchAnalysis);
 
   const res1 = applyAnalystDecision(singleAnalysis, p1);
   const res2 = applyAnalystDecision(batchAnalysis, p2);
@@ -428,104 +492,6 @@ test("12. Single and Batch use the same AI decision layer", () => {
   assert.equal(res2.applied, true);
   assert.equal(singleAnalysis.finalPrediction, batchAnalysis.finalPrediction);
   assert.equal(singleAnalysis.decision, batchAnalysis.decision);
+  assert.equal(p1.divergenceState, p2.divergenceState);
   assert.equal(singleAnalysis.aiReasoningPacket?.aiRole, batchAnalysis.aiReasoningPacket?.aiRole);
-});
-
-test("13. Ararat Armenia vs Sparta Prague competition identity is correct", () => {
-  const analysis = createMockAnalysis({
-    home: { team: "Ararat Armenia", goals: 1.8, lambda: 1.8 },
-    away: { team: "Sparta Prague", goals: 2.3, lambda: 2.3 },
-    marketCandidates: [
-      { market: "OVER/UNDER 1.5", selection: "Over 1.5 Goals", modelProbability: 0.81 } as any,
-      { market: "1X2", selection: "Sparta Prague Win", modelProbability: 0.62 } as any,
-    ],
-  });
-
-  const raw = {
-    identityCheck: {
-      status: "PASS",
-      homeConfidence: 96,
-      awayConfidence: 97,
-      competitionConfidence: 95,
-      notes: ["UEFA Conference League qualifying round verified. Cross-league competition context confirmed."],
-    },
-    teamStrength: {
-      home: { relative: "WEAKER", rationale: "Armenian Premier League champion vs Czech First League giant." },
-      away: { relative: "STRONGER", rationale: "Significantly higher coefficient and squad depth." },
-      strengthGap: "AWAY_CLEAR",
-      opponentQualityAdjustment: "Sparta Prague plays in significantly higher UEFA coefficient tier.",
-    },
-    realityCheck: { status: "COHERENT", score: 94, flags: [] },
-    panel: [
-      { role: "Competition Strength Analyst", name: "Comp Analyst", stance: "AWAY", assessment: "Czech league strength vastly exceeds Armenian domestic baseline.", evidence: [], concern: "None", question: "None" },
-      { role: "Team Strength Scout", name: "Scout", stance: "AWAY", assessment: "Sparta Prague clear strength differential.", evidence: [], concern: "None", question: "None" }
-    ],
-    debate: [],
-    chair: {
-      summary: "Sparta Prague holds decisive cross-competition quality advantage.",
-      strongestCase: "European pedigree and squad value gap.",
-      strongestCountercase: "Long distance travel to Yerevan.",
-      unresolvedQuestion: "None",
-      decision: "SUPPORT",
-      severity: "NORMAL",
-      revalidationReason: "",
-    },
-    analystCall: {
-      status: "ACTIVE",
-      selection: "Sparta Prague Win",
-      callType: "AWAY_WIN",
-      rationale: "Cross-competition coefficient disparity strongly favors Sparta Prague.",
-      conviction: "HIGH",
-      divergenceReasonCode: "OPPONENT_ADJUSTED_STRENGTH_GAP",
-      safeAlternative: "Over 1.5 Goals",
-    },
-    marketReview: {
-      quantitativeLeader: "Over 1.5 Goals",
-      selectedMarket: "Sparta Prague Win",
-      safeAlternative: "Over 1.5 Goals",
-      panelView: "Away edge decisive.",
-      alternatives: ["Over 1.5 Goals"],
-    },
-  };
-
-  const { panel } = cleanPanel(raw, "gemini-3.6-flash", analysis);
-  const res = applyAnalystDecision(analysis, panel);
-  assert.equal(res.applied, true);
-  assert.equal(analysis.finalPrediction, "Sparta Prague Win");
-  assert.equal(panel.teamStrength.strengthGap, "AWAY_CLEAR");
-});
-
-test("14. Plymouth Argyle vs Real Madrid does not produce a conclusion based on corrupted team identity", () => {
-  const analysis = createMockAnalysis({
-    home: { team: "Plymouth Argyle", goals: 0.8, lambda: 0.8 },
-    away: { team: "Real Madrid", goals: 3.2, lambda: 3.2 },
-  });
-
-  const corruptedPayload = {
-    identityCheck: {
-      status: "FAIL",
-      homeConfidence: 20,
-      awayConfidence: 15,
-      competitionConfidence: 10,
-      notes: ["Absurd pairing in Championship fixture database: Plymouth Argyle cannot play Real Madrid in domestic league."],
-    },
-    chair: {
-      summary: "Severe fixture database corruption detected.",
-      decision: "REVALIDATE",
-      severity: "SEVERE",
-      revalidationReason: "Corrupted fixture identity.",
-    },
-    analystCall: {
-      status: "ACTIVE",
-      selection: "Plymouth Argyle Win", // Corrupted hallucinated selection
-      callType: "HOME_WIN",
-    },
-  };
-
-  const { panel } = cleanPanel(corruptedPayload, "gemini-3.6-flash", analysis);
-  const res = applyAnalystDecision(analysis, panel);
-  assert.equal(res.applied, false);
-  assert.match(res.reason, /FAIL/);
-  // Preserves quantitative fallback, rejecting corrupt override
-  assert.equal(analysis.finalPrediction, "Over 1.5 Goals");
 });

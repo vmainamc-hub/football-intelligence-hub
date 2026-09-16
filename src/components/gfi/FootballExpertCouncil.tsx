@@ -71,16 +71,20 @@ export function FootballExpertCouncil({ panel }: Props) {
             </div>
             {!unavailable && (
               <div className="flex items-center gap-2">
-                <span className="text-[11px] text-muted-foreground font-medium">DIVERGENCE:</span>
-                {call.divergenceFromQuantitativeLeader ? (
-                  <span className="rounded-full bg-amber-500/15 border border-amber-500/30 px-2.5 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
-                    YES (DIRECTIONAL SHIFT)
-                  </span>
-                ) : (
-                  <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                    NO (CONSENSUS)
-                  </span>
-                )}
+                <span className="text-[11px] text-muted-foreground font-medium">COUNCIL STATE:</span>
+                <span
+                  className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
+                    panel.divergenceState === "DIVERGE"
+                      ? "bg-amber-500/15 border-amber-500/30 text-amber-600 dark:text-amber-400"
+                      : panel.divergenceState === "AGREE"
+                        ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                        : panel.divergenceState === "REVALIDATE"
+                          ? "bg-red-500/15 border-red-500/30 text-red-600 dark:text-red-400"
+                          : "bg-muted border-border text-muted-foreground"
+                  }`}
+                >
+                  {panel.divergenceState || (call.divergenceFromQuantitativeLeader ? "DIVERGE" : "AGREE")}
+                </span>
               </div>
             )}
           </div>
@@ -189,7 +193,7 @@ export function FootballExpertCouncil({ panel }: Props) {
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded border border-border bg-card p-3"><div className="label-xs">IDENTITY CHECK</div>{unavailable ? <div className="mt-1 font-semibold text-amber-500">NOT ASSESSED</div> : <><div className={`mt-1 font-semibold ${tone(panel.identityCheck.status)}`}>{panel.identityCheck.status}</div><div className="mt-2 text-[11px] text-muted-foreground">Home {panel.identityCheck.homeConfidence}% · Away {panel.identityCheck.awayConfidence}% · Competition {panel.identityCheck.competitionConfidence}%</div></>}</div>
-        <div className="rounded border border-border bg-card p-3"><div className="label-xs">FOOTBALL REALITY</div>{unavailable ? <div className="mt-1 font-semibold text-amber-500">NOT ASSESSED</div> : <><div className={`mt-1 font-semibold ${tone(panel.realityCheck.status)}`}>{panel.realityCheck.status}</div><div className="mt-2 text-[11px] text-muted-foreground">Reality score {panel.realityCheck.score}/100</div></>}</div>
+        <div className="rounded border border-border bg-card p-3"><div className="label-xs">FOOTBALL REALITY</div>{unavailable ? <div className="mt-1 font-semibold text-amber-500">NOT ASSESSED</div> : <><div className={`mt-1 font-semibold ${tone(panel.realityCheck.status)}`}>{panel.realityCheck.status}</div><div className="mt-2 text-[11px] text-muted-foreground">{panel.realityCheck.score !== undefined ? `Reality score ${panel.realityCheck.score}/100` : "Evidence coherence verified"}</div></>}</div>
         <div className="rounded border border-border bg-card p-3"><div className="label-xs">CHAIR DECISION</div><div className={`mt-1 font-semibold ${unavailable ? "text-amber-500" : tone(panel.chair.decision)}`}>{unavailable ? "NOT EXECUTED" : panel.chair.decision}</div><div className="mt-2 text-[11px] text-muted-foreground">{unavailable ? "AI chair did not run" : `Severity ${panel.chair.severity}`}</div></div>
         <div className="rounded border border-border bg-card p-3"><div className="label-xs">COUNCIL MARKET</div><div className="mt-1 font-semibold">{panel.marketReview.selectedMarket || "Not supplied"}</div><div className="mt-2 text-[11px] text-muted-foreground">{unavailable ? "Quantitative fallback" : "Decision-layer selection"}</div></div>
       </div>
@@ -206,6 +210,31 @@ export function FootballExpertCouncil({ panel }: Props) {
             </article>
           ))}
         </div>
+
+        {panel.contrarianChallenge && (
+          <div className="mt-5 rounded border border-border bg-card p-4">
+            <div className="flex items-center justify-between gap-2 border-b border-border pb-2">
+              <div className="label-xs text-primary font-bold">CONTRARIAN CHALLENGE · QUANTITATIVE LEADER UNDER TEST</div>
+              <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                {panel.contrarianChallenge.verdict}
+              </span>
+            </div>
+            <div className="mt-3 grid gap-3 text-xs md:grid-cols-2">
+              <div>
+                <div className="font-semibold text-foreground">Quantitative Leader Challenged:</div>
+                <div className="mt-0.5 text-muted-foreground">{panel.contrarianChallenge.quantitativeLeaderChallenged}</div>
+                <div className="mt-2 font-semibold text-foreground">Challenge Question:</div>
+                <div className="mt-0.5 text-muted-foreground">{panel.contrarianChallenge.challengeQuestion}</div>
+              </div>
+              <div>
+                <div className="font-semibold text-foreground">Strongest Alternative Football Argument:</div>
+                <div className="mt-0.5 text-muted-foreground">{panel.contrarianChallenge.strongestAlternative} — {panel.contrarianChallenge.evidenceForAlternative}</div>
+                <div className="mt-2 font-semibold text-foreground">Chair's Evaluation of Challenge:</div>
+                <div className="mt-0.5 text-muted-foreground">{panel.contrarianChallenge.chairResponse}</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {panel.debate.length > 0 && <div className="mt-5 rounded border border-border bg-card p-4"><div className="label-xs text-primary">THE PANEL ROOM · CHALLENGE & RESPONSE</div><div className="mt-3 space-y-4">{panel.debate.map((turn, index) => <div key={`${turn.speaker}-${index}`} className="border-l-2 border-primary/40 pl-3 text-sm leading-6"><div className="text-xs font-semibold text-primary">{turn.speaker}</div><div className="mt-1"><span className="font-semibold">Challenge:</span> {turn.challenges}</div><div className="mt-1 text-muted-foreground"><span className="font-semibold text-foreground">Response:</span> {turn.response}</div></div>)}</div></div>}
 

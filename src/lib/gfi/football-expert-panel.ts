@@ -3,6 +3,49 @@ import type { MatchRow } from "./intelligence";
 
 export type ExpertPanelDecision = "SUPPORT" | "CHALLENGE" | "REVALIDATE";
 export type ExpertPanelSeverity = "NORMAL" | "MINOR" | "SIGNIFICANT" | "SEVERE";
+export type AuthoritativeDivergenceState = "AGREE" | "DIVERGE" | "REVALIDATE" | "INCOMPLETE";
+
+export type SpecialistReport = {
+  role: string;
+  name: string;
+  status: "ACTIVE" | "LIMITED_EVIDENCE" | "INSUFFICIENT_DATA";
+  stance: "HOME" | "DRAW" | "AWAY" | "GOALS" | "BTTS" | "NEUTRAL" | "REVALIDATE";
+  assessment: string;
+  evidence: string[];
+  confidence: number;
+  recommendation: "SUPPORT" | "CHALLENGE" | "REVALIDATE";
+  concern?: string;
+  question?: string;
+  details?: Record<string, any>;
+};
+
+export type ContrarianChallenge = {
+  quantitativeLeaderChallenged: string;
+  challengeQuestion: string;
+  strongestAlternative: string;
+  evidenceForAlternative: string;
+  evidenceAgainstAlternative: string;
+  verdict: "CHALLENGE_SUCCEEDED" | "CHALLENGE_REJECTED" | "ALTERNATIVE_INFORMATIVE" | "UNRESOLVED";
+  chairResponse: string;
+};
+
+export type CouncilCompleteness = {
+  isComplete: boolean;
+  reasons: string[];
+  missingSpecialists: string[];
+  teamStrengthValid: boolean;
+  tacticalValid: boolean;
+  statisticalValid: boolean;
+  formTrajectoryValid: boolean;
+  contextMotivationValid: boolean;
+  competitionStrengthValid: boolean;
+  dataForensicValid: boolean;
+  contrarianValid: boolean;
+  debateValid: boolean;
+  chairValid: boolean;
+  analystCallValid: boolean;
+};
+
 export type AIAnalystCallType =
   | "HOME_WIN"
   | "DRAW"
@@ -63,6 +106,7 @@ export type CouncilDiagnosticAttempt = {
 export type FootballExpertPanel = {
   status: "ACTIVE" | "UNAVAILABLE" | "ERROR";
   executionState: "AVAILABLE" | "UNAVAILABLE" | "ERROR";
+  divergenceState: AuthoritativeDivergenceState;
   provider: "GEMINI" | "NONE";
   model: string;
   generatedAt: string;
@@ -89,28 +133,34 @@ export type FootballExpertPanel = {
     opponentQualityAdjustment: string;
   };
   realityCheck: {
-    status: "COHERENT" | "TENSION" | "SEVERE_TENSION";
-    score: number;
+    status: "COHERENT" | "TENSION" | "SEVERE_TENSION" | "LIMITED_EVIDENCE";
+    score?: number;
     flags: string[];
   };
-  panel: Array<{
-    role: string;
-    name: string;
-    stance: "HOME" | "DRAW" | "AWAY" | "GOALS" | "BTTS" | "NEUTRAL" | "REVALIDATE";
-    assessment: string;
-    evidence: string[];
-    concern: string;
-    question: string;
-  }>;
+  specialists?: {
+    teamStrengthScout: SpecialistReport;
+    tacticalAnalyst: SpecialistReport;
+    statisticalAnalyst: SpecialistReport;
+    formTrajectoryAnalyst: SpecialistReport;
+    contextMotivationAnalyst: SpecialistReport;
+    competitionStrengthAnalyst: SpecialistReport;
+    dataForensicAnalyst: SpecialistReport;
+    contrarianAnalyst: SpecialistReport;
+  };
+  contrarianChallenge?: ContrarianChallenge;
+  panel: SpecialistReport[];
   debate: Array<{ speaker: string; challenges: string; response: string }>;
   chair: {
     summary: string;
     strongestCase: string;
     strongestCountercase: string;
     unresolvedQuestion: string;
+    quantitativeLeader?: string;
+    analystConclusion?: string;
     decision: ExpertPanelDecision;
     severity: ExpertPanelSeverity;
     revalidationReason: string;
+    divergenceExplanation?: string;
   };
   analystCall: AIAnalystCall;
   marketReview: {
@@ -182,6 +232,209 @@ export function marketSurface(a: AuthoritativeMatchAnalysis) {
   }
   return rows.sort((x, y) => y.probability - x.probability).slice(0, 32);
 }
+export const MANDATORY_SPECIALIST_DEFS = [
+  { key: "teamStrengthScout", role: "Team Strength Scout", name: "Team Strength Scout" },
+  { key: "tacticalAnalyst", role: "Tactical Analyst", name: "Tactical Analyst" },
+  { key: "statisticalAnalyst", role: "Statistical Analyst", name: "Statistical Analyst" },
+  { key: "formTrajectoryAnalyst", role: "Form & Trajectory Analyst", name: "Form & Trajectory Analyst" },
+  { key: "contextMotivationAnalyst", role: "Context & Motivation Analyst", name: "Context & Motivation Analyst" },
+  { key: "competitionStrengthAnalyst", role: "Competition Strength Analyst", name: "Competition Strength Analyst" },
+  { key: "dataForensicAnalyst", role: "Data Forensic Analyst", name: "Data Forensic Analyst" },
+  { key: "contrarianAnalyst", role: "Contrarian Analyst", name: "Contrarian Analyst" },
+] as const;
+
+export function findSpecialist(raw: any, key: string, roleName: string): any {
+  if (raw?.specialists && typeof raw.specialists[key] === "object" && raw.specialists[key] !== null) {
+    return raw.specialists[key];
+  }
+  if (Array.isArray(raw?.panel)) {
+    const target = roleName.toLowerCase();
+    const found = raw.panel.find((s: any) => {
+      const r = String(s?.role || "").toLowerCase();
+      if (r === target) return true;
+      if (key === "teamStrengthScout" && r.includes("team strength")) return true;
+      if (key === "tacticalAnalyst" && r.includes("tactic")) return true;
+      if (key === "statisticalAnalyst" && r.includes("statistic")) return true;
+      if (key === "formTrajectoryAnalyst" && (r.includes("form") || r.includes("trajectory"))) return true;
+      if (key === "contextMotivationAnalyst" && (r.includes("context") || r.includes("motivation"))) return true;
+      if (key === "competitionStrengthAnalyst" && (r.includes("competition") || r.includes("league tier"))) return true;
+      if (key === "dataForensicAnalyst" && (r.includes("forensic") || r.includes("data integrity"))) return true;
+      if (key === "contrarianAnalyst" && (r.includes("contrarian") || r.includes("devil"))) return true;
+      return false;
+    });
+    if (found) return found;
+  }
+  return null;
+}
+
+export function isSpecialistSubstantive(s: any): boolean {
+  if (!s || typeof s !== "object") return false;
+  const assessment = typeof s.assessment === "string" ? s.assessment.trim() : "";
+  if (assessment.length < 15) return false;
+  const lower = assessment.toLowerCase();
+  if (
+    lower === "not supplied." ||
+    lower === "not supplied" ||
+    lower === "no assessment." ||
+    lower === "none" ||
+    lower === "assessment unavailable." ||
+    lower === "unknown"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function isChairSubstantive(chair: any): boolean {
+  if (!chair || typeof chair !== "object") return false;
+  const summary = typeof chair.summary === "string" ? chair.summary.trim() : "";
+  if (summary.length < 15) return false;
+  const lower = summary.toLowerCase();
+  if (
+    lower.includes("council synthesis unavailable") ||
+    lower.includes("not supplied") ||
+    lower === "none"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function validateCouncilCompleteness(raw: any, quantitativeLeader = ""): CouncilCompleteness {
+  const missingSpecialists: string[] = [];
+  const reasons: string[] = [];
+
+  const teamStrengthScout = findSpecialist(raw, "teamStrengthScout", "Team Strength Scout");
+  const tacticalAnalyst = findSpecialist(raw, "tacticalAnalyst", "Tactical Analyst");
+  const statisticalAnalyst = findSpecialist(raw, "statisticalAnalyst", "Statistical Analyst");
+  const formTrajectoryAnalyst = findSpecialist(raw, "formTrajectoryAnalyst", "Form & Trajectory Analyst");
+  const contextMotivationAnalyst = findSpecialist(raw, "contextMotivationAnalyst", "Context & Motivation Analyst");
+  const competitionStrengthAnalyst = findSpecialist(raw, "competitionStrengthAnalyst", "Competition Strength Analyst");
+  const dataForensicAnalyst = findSpecialist(raw, "dataForensicAnalyst", "Data Forensic Analyst");
+  const contrarianAnalyst = findSpecialist(raw, "contrarianAnalyst", "Contrarian Analyst");
+
+  const teamStrengthValid = isSpecialistSubstantive(teamStrengthScout);
+  if (!teamStrengthValid) {
+    missingSpecialists.push("Team Strength Scout");
+    reasons.push("Team Strength Scout assessment missing or empty");
+  }
+
+  const tacticalValid = isSpecialistSubstantive(tacticalAnalyst);
+  if (!tacticalValid) {
+    missingSpecialists.push("Tactical Analyst");
+    reasons.push("Tactical Analyst assessment missing or empty");
+  }
+
+  const statisticalValid = isSpecialistSubstantive(statisticalAnalyst);
+  if (!statisticalValid) {
+    missingSpecialists.push("Statistical Analyst");
+    reasons.push("Statistical Analyst assessment missing or empty");
+  }
+
+  const formTrajectoryValid = isSpecialistSubstantive(formTrajectoryAnalyst);
+  if (!formTrajectoryValid) {
+    missingSpecialists.push("Form & Trajectory Analyst");
+    reasons.push("Form & Trajectory Analyst assessment missing or empty");
+  }
+
+  const contextMotivationValid = isSpecialistSubstantive(contextMotivationAnalyst);
+  if (!contextMotivationValid) {
+    missingSpecialists.push("Context & Motivation Analyst");
+    reasons.push("Context & Motivation Analyst assessment missing or empty");
+  }
+
+  const competitionStrengthValid = isSpecialistSubstantive(competitionStrengthAnalyst);
+  if (!competitionStrengthValid) {
+    missingSpecialists.push("Competition Strength Analyst");
+    reasons.push("Competition Strength Analyst assessment missing or empty");
+  }
+
+  const dataForensicValid = isSpecialistSubstantive(dataForensicAnalyst);
+  if (!dataForensicValid) {
+    missingSpecialists.push("Data Forensic Analyst");
+    reasons.push("Data Forensic Analyst assessment missing or empty");
+  }
+
+  const contrarianValid = isSpecialistSubstantive(contrarianAnalyst);
+  if (!contrarianValid) {
+    missingSpecialists.push("Contrarian Analyst");
+    reasons.push("Contrarian Analyst assessment missing or empty");
+  }
+
+  const debateValid = Array.isArray(raw?.debate);
+  if (!debateValid) {
+    reasons.push("Debate array missing");
+  }
+
+  const chairValid = isChairSubstantive(raw?.chair);
+  if (!chairValid) {
+    reasons.push("Chair synthesis missing or incomplete");
+  }
+
+  const analystCallValid = Boolean(
+    raw?.analystCall &&
+      typeof raw.analystCall.selection === "string" &&
+      raw.analystCall.selection.trim().length > 0,
+  );
+  if (!analystCallValid) {
+    reasons.push("Analyst call selection missing");
+  }
+
+  const specialistsComplete =
+    teamStrengthValid &&
+    tacticalValid &&
+    statisticalValid &&
+    formTrajectoryValid &&
+    contextMotivationValid &&
+    competitionStrengthValid &&
+    dataForensicValid &&
+    contrarianValid;
+
+  const isComplete = specialistsComplete && debateValid && chairValid && analystCallValid;
+
+  return {
+    isComplete,
+    reasons,
+    missingSpecialists,
+    teamStrengthValid,
+    tacticalValid,
+    statisticalValid,
+    formTrajectoryValid,
+    contextMotivationValid,
+    competitionStrengthValid,
+    dataForensicValid,
+    contrarianValid,
+    debateValid,
+    chairValid,
+    analystCallValid,
+  };
+}
+
+export function computeDivergenceState(
+  panelStatus: FootballExpertPanel["status"],
+  chairDecision: ExpertPanelDecision,
+  selectedMarket: string,
+  quantitativeLeader: string,
+  isComplete: boolean,
+): AuthoritativeDivergenceState {
+  if (!isComplete || panelStatus !== "ACTIVE") {
+    return "INCOMPLETE";
+  }
+  if (chairDecision === "REVALIDATE") {
+    return "REVALIDATE";
+  }
+  if (chairDecision === "SUPPORT" && selectedMarket === quantitativeLeader) {
+    return "AGREE";
+  }
+  if (selectedMarket !== quantitativeLeader) {
+    return "DIVERGE";
+  }
+  if (chairDecision === "CHALLENGE" && selectedMarket === quantitativeLeader) {
+    return "REVALIDATE";
+  }
+  return "INCOMPLETE";
+}
+
 export const emptyPanel = (
   status: FootballExpertPanel["status"],
   model: string,
@@ -195,6 +448,7 @@ export const emptyPanel = (
   return {
     status,
     executionState: status === "ACTIVE" ? "AVAILABLE" : status,
+    divergenceState: "INCOMPLETE",
     provider: "NONE",
     model,
     generatedAt: new Date().toISOString(),
@@ -215,7 +469,17 @@ export const emptyPanel = (
       strengthGap: "UNKNOWN",
       opponentQualityAdjustment: note,
     },
-    realityCheck: { status: "TENSION", score: 0, flags: [note] },
+    realityCheck: { status: "LIMITED_EVIDENCE", score: undefined, flags: [note] },
+    specialists: undefined,
+    contrarianChallenge: {
+      quantitativeLeaderChallenged: s,
+      challengeQuestion: `Why might ${s} be the wrong final football conclusion?`,
+      strongestAlternative: surface[1]?.selection ?? s,
+      evidenceForAlternative: "Council unavailable for alternative evaluation.",
+      evidenceAgainstAlternative: "Council unavailable.",
+      verdict: "UNRESOLVED",
+      chairResponse: note,
+    },
     panel: [],
     debate: [],
     chair: {
@@ -223,9 +487,12 @@ export const emptyPanel = (
       strongestCase: "AI council unavailable.",
       strongestCountercase: "AI council unavailable.",
       unresolvedQuestion: "Team strength versus statistical context remains unresolved.",
+      quantitativeLeader: s,
+      analystConclusion: s,
       decision: "REVALIDATE",
       severity: "SIGNIFICANT",
       revalidationReason: note,
+      divergenceExplanation: "Council unavailable; quantitative leader preserved.",
     },
     analystCall: {
       status: "FALLBACK",
@@ -255,6 +522,7 @@ export const emptyPanel = (
     limitations: [note],
   };
 };
+
 export function cleanPanel(
   value: any,
   model: string,
@@ -262,7 +530,7 @@ export function cleanPanel(
   fallbackModelUsed = false,
   retryAttempts = 1,
   diagnostics?: FootballExpertPanel["diagnostics"],
-): { panel: FootballExpertPanel; rejectedAnything: boolean } {
+): { panel: FootballExpertPanel; rejectedAnything: boolean; completeness: CouncilCompleteness } {
   let rejectedAnything = false;
   const raw = value && typeof value === "object" ? value : {};
   const surface = marketSurface(a);
@@ -271,9 +539,16 @@ export function cleanPanel(
   if (requested && !allowed.has(requested)) rejectedAnything = true;
   const q = surface[0]?.selection ?? a.finalPrediction;
   const qProb = surface[0]?.probability ?? Math.round((a.probabilities.home || 0) * 100);
-  const selection = allowed.has(requested) ? requested : q;
+
+  const completeness = validateCouncilCompleteness(raw, q);
+  if (!completeness.isComplete) {
+    rejectedAnything = true;
+  }
+
+  const selection = allowed.has(requested) && completeness.isComplete ? requested : q;
   const row = surface.find((x) => x.selection === selection);
-  const isDivergent = selection !== q;
+  const isDivergent = completeness.isComplete && selection !== q;
+
   const validDivergenceCodes: AIDivergenceReason[] = [
     "DIRECTIONAL_SIGNAL_STRONGER_THAN_SAFE_TOTAL",
     "RECENT_TRAJECTORY_OVERRIDES_LONG_TERM_BASELINE",
@@ -308,6 +583,7 @@ export function cleanPanel(
         ? "NO_DIRECTIONAL_EDGE_RETAINED_TOTALS"
         : "NONE";
   }
+
   const alternatives = Array.isArray(raw.marketReview?.alternatives)
     ? raw.marketReview.alternatives
         .filter((x: any) => typeof x === "string" && allowed.has(x))
@@ -322,6 +598,7 @@ export function cleanPanel(
         "The council judged the directional or specific football signal more informative than the broad quantitative leader.",
       )
     : "";
+
   const rel = (v: any) => (v === "STRONGER" || v === "WEAKER" || v === "SIMILAR" ? v : "UNKNOWN");
   const stance = (v: any) =>
     ["HOME", "DRAW", "AWAY", "GOALS", "BTTS", "NEUTRAL", "REVALIDATE"].includes(String(v))
@@ -330,9 +607,23 @@ export function cleanPanel(
   const id = ["PASS", "WARN", "FAIL"].includes(raw.identityCheck?.status)
     ? raw.identityCheck.status
     : "WARN";
-  const reality = ["COHERENT", "TENSION", "SEVERE_TENSION"].includes(raw.realityCheck?.status)
+
+  let realityScore: number | undefined = undefined;
+  if (
+    raw.realityCheck?.score !== undefined &&
+    raw.realityCheck?.score !== null &&
+    !isNaN(Number(raw.realityCheck.score))
+  ) {
+    realityScore = Math.max(0, Math.min(100, Math.round(Number(raw.realityCheck.score))));
+  }
+  const reality = ["COHERENT", "TENSION", "SEVERE_TENSION", "LIMITED_EVIDENCE"].includes(
+    raw.realityCheck?.status,
+  )
     ? raw.realityCheck.status
-    : "TENSION";
+    : realityScore !== undefined
+      ? "TENSION"
+      : "LIMITED_EVIDENCE";
+
   const severity = ["NORMAL", "MINOR", "SIGNIFICANT", "SEVERE"].includes(raw.chair?.severity)
     ? raw.chair.severity
     : "SIGNIFICANT";
@@ -370,12 +661,87 @@ export function cleanPanel(
   const flags = Array.isArray(raw.realityCheck?.flags)
     ? raw.realityCheck.flags.filter((x: any) => typeof x === "string").slice(0, 10)
     : [];
-  const p = Array.isArray(raw.panel) ? raw.panel.slice(0, 8) : [];
+
+  const panelStatus: FootballExpertPanel["status"] = completeness.isComplete ? "ACTIVE" : "UNAVAILABLE";
+  const executionState: FootballExpertPanel["executionState"] = completeness.isComplete
+    ? "AVAILABLE"
+    : "UNAVAILABLE";
+  const divergenceState = computeDivergenceState(panelStatus, decision, selection, q, completeness.isComplete);
+
+  // Build the 8 specialist reports
+  const specialistsObj: any = {};
+  const panelList: SpecialistReport[] = [];
+
+  for (const def of MANDATORY_SPECIALIST_DEFS) {
+    const s = findSpecialist(raw, def.key, def.role);
+    const rep: SpecialistReport = {
+      role: def.role,
+      name: str(s?.name, def.name),
+      status: s && isSpecialistSubstantive(s) ? "ACTIVE" : "LIMITED_EVIDENCE",
+      stance: stance(s?.stance),
+      assessment: str(s?.assessment, "No supported assessment supplied."),
+      evidence: Array.isArray(s?.evidence)
+        ? s.evidence.filter((e: any) => typeof e === "string").slice(0, 6)
+        : [],
+      confidence: pct(s?.confidence ?? (s ? 75 : 0)),
+      recommendation: ["SUPPORT", "CHALLENGE", "REVALIDATE"].includes(s?.recommendation)
+        ? s.recommendation
+        : "SUPPORT",
+      concern: str(s?.concern, "None stated."),
+      question: str(s?.question, "None."),
+      details: s?.details && typeof s.details === "object" ? s.details : undefined,
+    };
+    specialistsObj[def.key] = rep;
+    panelList.push(rep);
+  }
+
+  // Contrarian Challenge construction
+  const contrarianAnalyst = specialistsObj.contrarianAnalyst;
+  const contrarianChallenge: ContrarianChallenge = {
+    quantitativeLeaderChallenged: str(raw.contrarianChallenge?.quantitativeLeaderChallenged, q),
+    challengeQuestion: str(
+      raw.contrarianChallenge?.challengeQuestion,
+      `Why might ${q} be the wrong final football conclusion despite its mathematical model probability?`,
+    ),
+    strongestAlternative: str(
+      raw.contrarianChallenge?.strongestAlternative,
+      selection !== q ? selection : (surface[1]?.selection ?? "Directional 1X2"),
+    ),
+    evidenceForAlternative: str(
+      raw.contrarianChallenge?.evidenceForAlternative,
+      contrarianAnalyst?.assessment || "Directional edge identified beyond raw totals.",
+    ),
+    evidenceAgainstAlternative: str(
+      raw.contrarianChallenge?.evidenceAgainstAlternative,
+      "Counter-variance or opposition transition threat.",
+    ),
+    verdict: ["CHALLENGE_SUCCEEDED", "CHALLENGE_REJECTED", "ALTERNATIVE_INFORMATIVE", "UNRESOLVED"].includes(
+      raw.contrarianChallenge?.verdict,
+    )
+      ? raw.contrarianChallenge.verdict
+      : isDivergent
+        ? "CHALLENGE_SUCCEEDED"
+        : "CHALLENGE_REJECTED",
+    chairResponse: str(
+      raw.contrarianChallenge?.chairResponse,
+      raw.chair?.summary ?? "The Chair and Council evaluated the contrarian challenge against the quantitative leader.",
+    ),
+  };
+
   const d = Array.isArray(raw.debate) ? raw.debate.slice(0, 10) : [];
+
+  const analystCallRationale = completeness.isComplete
+    ? str(
+        raw.analystCall?.rationale,
+        "The council selected the strongest supported market from the computed market surface.",
+      )
+    : `AI COUNCIL INCOMPLETE: Missing or malformed specialist evaluations (${completeness.reasons.join("; ")}). Quantitative baseline preserved.`;
+
   const panel: FootballExpertPanel = {
-    status: "ACTIVE",
-    executionState: "AVAILABLE",
-    provider: "GEMINI",
+    status: panelStatus,
+    executionState,
+    divergenceState,
+    provider: completeness.isComplete ? "GEMINI" : "NONE",
     model,
     generatedAt: new Date().toISOString(),
     architectureVersion: "gfi-ai-football-council-v2",
@@ -408,18 +774,10 @@ export function cleanPanel(
         "Opponent-quality adjustment not established.",
       ),
     },
-    realityCheck: { status: reality, score: pct(raw.realityCheck?.score), flags },
-    panel: p.map((x: any) => ({
-      role: str(x?.role, "Expert"),
-      name: str(x?.name, "Analyst"),
-      stance: stance(x?.stance),
-      assessment: str(x?.assessment, "No assessment."),
-      evidence: Array.isArray(x?.evidence)
-        ? x.evidence.filter((y: any) => typeof y === "string").slice(0, 5)
-        : [],
-      concern: str(x?.concern, "None stated."),
-      question: str(x?.question, "No question."),
-    })),
+    realityCheck: { status: reality, score: realityScore, flags },
+    specialists: specialistsObj,
+    contrarianChallenge,
+    panel: panelList,
     debate: d.map((x: any) => ({
       speaker: str(x?.speaker, "Panel"),
       challenges: str(x?.challenges, ""),
@@ -430,21 +788,21 @@ export function cleanPanel(
       strongestCase: str(raw.chair?.strongestCase, "Not supplied."),
       strongestCountercase: str(raw.chair?.strongestCountercase, "Not supplied."),
       unresolvedQuestion: str(raw.chair?.unresolvedQuestion, "Not supplied."),
+      quantitativeLeader: q,
+      analystConclusion: selection,
       decision,
       severity,
       revalidationReason: str(raw.chair?.revalidationReason, ""),
+      divergenceExplanation: isDivergent ? divergenceReason : "Council agrees with quantitative leader.",
     },
     analystCall: {
-      status: "ACTIVE",
+      status: completeness.isComplete ? "ACTIVE" : "FALLBACK",
       market: row?.market ?? "QUANTITATIVE",
       selection,
       callType: validCalls.includes(raw.analystCall?.callType) ? raw.analystCall.callType : "OTHER",
-      rationale: str(
-        raw.analystCall?.rationale,
-        "The council selected the strongest supported market from the computed market surface.",
-      ),
-      conviction,
-      evidenceQuality,
+      rationale: analystCallRationale,
+      conviction: completeness.isComplete ? conviction : "LOW",
+      evidenceQuality: completeness.isComplete ? evidenceQuality : "LIMITED",
       quantitativeLeader: q,
       quantitativeProbability: row?.probability ?? 0,
       quantitativeLeaderProbability: qProb,
@@ -468,14 +826,15 @@ export function cleanPanel(
       ? raw.limitations.filter((x: any) => typeof x === "string").slice(0, 10)
       : [],
   };
-  return { panel, rejectedAnything };
+  return { panel, rejectedAnything, completeness };
 }
+
 export function applyAnalystDecision(
   a: AuthoritativeMatchAnalysis,
   p: FootballExpertPanel,
 ): { applied: boolean; reason: string } {
-  if (p.status !== "ACTIVE" || p.analystCall.status !== "ACTIVE")
-    return { applied: false, reason: "Panel or call not active" };
+  if (p.status !== "ACTIVE" || p.analystCall.status !== "ACTIVE" || p.divergenceState === "INCOMPLETE")
+    return { applied: false, reason: "Panel or call not active / council incomplete" };
   if (p.identityCheck.status === "FAIL")
     return {
       applied: false,
@@ -483,6 +842,8 @@ export function applyAnalystDecision(
     };
   if (p.chair.severity === "SEVERE")
     return { applied: false, reason: "Chair severity SEVERE — quantitative fallback preserved" };
+  if (p.chair.decision === "REVALIDATE")
+    return { applied: false, reason: "Chair decision REVALIDATE — quantitative fallback preserved" };
   const s = p.analystCall.selection;
   if (!s) return { applied: false, reason: "No selection present on analyst call" };
   const quantitativeLeaderBeforeAI = p.analystCall.quantitativeLeader;
@@ -652,7 +1013,68 @@ When analystCall diverges from quantitativeLeader, divergenceReasonCode MUST be 
 1. You MUST NEVER invent odds, xG, injuries, lineups, rankings, team strength, or market probabilities. Missing information is UNKNOWN.
 2. analystCall.selection MUST exactly match one string from marketSurface.
 3. If identityCheck.status is FAIL or severity is SEVERE, Chair decision must be REVALIDATE.
-4. Return valid JSON only matching the schema.`;
+4. Return valid JSON only. Every field and specialist MUST be populated with substantive football analysis (not placeholders):
+{
+  "identityCheck": { "status": "PASS"|"WARN"|"FAIL", "homeConfidence": 95, "awayConfidence": 95, "competitionConfidence": 95, "notes": ["..."] },
+  "teamStrength": {
+    "home": { "relative": "STRONGER"|"WEAKER"|"SIMILAR"|"UNKNOWN", "rationale": "..." },
+    "away": { "relative": "STRONGER"|"WEAKER"|"SIMILAR"|"UNKNOWN", "rationale": "..." },
+    "strengthGap": "HOME_CLEAR"|"AWAY_CLEAR"|"CLOSE"|"UNKNOWN",
+    "opponentQualityAdjustment": "..."
+  },
+  "realityCheck": { "status": "COHERENT"|"TENSION"|"SEVERE_TENSION"|"LIMITED_EVIDENCE", "score": 85, "flags": ["..."] },
+  "specialists": {
+    "teamStrengthScout": { "role": "Team Strength Scout", "name": "Team Strength Scout", "status": "ACTIVE", "stance": "HOME"|"DRAW"|"AWAY"|"GOALS"|"BTTS"|"NEUTRAL"|"REVALIDATE", "assessment": "...", "evidence": ["..."], "confidence": 80, "recommendation": "SUPPORT"|"CHALLENGE"|"REVALIDATE", "concern": "...", "question": "..." },
+    "tacticalAnalyst": { "role": "Tactical Analyst", "name": "Tactical Analyst", "status": "ACTIVE", "stance": "HOME"|"DRAW"|"AWAY"|"GOALS"|"BTTS"|"NEUTRAL"|"REVALIDATE", "assessment": "...", "evidence": ["..."], "confidence": 80, "recommendation": "SUPPORT"|"CHALLENGE"|"REVALIDATE", "concern": "...", "question": "..." },
+    "statisticalAnalyst": { "role": "Statistical Analyst", "name": "Statistical Analyst", "status": "ACTIVE", "stance": "HOME"|"DRAW"|"AWAY"|"GOALS"|"BTTS"|"NEUTRAL"|"REVALIDATE", "assessment": "...", "evidence": ["..."], "confidence": 80, "recommendation": "SUPPORT"|"CHALLENGE"|"REVALIDATE", "concern": "...", "question": "..." },
+    "formTrajectoryAnalyst": { "role": "Form & Trajectory Analyst", "name": "Form & Trajectory Analyst", "status": "ACTIVE", "stance": "HOME"|"DRAW"|"AWAY"|"GOALS"|"BTTS"|"NEUTRAL"|"REVALIDATE", "assessment": "...", "evidence": ["..."], "confidence": 80, "recommendation": "SUPPORT"|"CHALLENGE"|"REVALIDATE", "concern": "...", "question": "..." },
+    "contextMotivationAnalyst": { "role": "Context & Motivation Analyst", "name": "Context & Motivation Analyst", "status": "ACTIVE", "stance": "HOME"|"DRAW"|"AWAY"|"GOALS"|"BTTS"|"NEUTRAL"|"REVALIDATE", "assessment": "...", "evidence": ["..."], "confidence": 80, "recommendation": "SUPPORT"|"CHALLENGE"|"REVALIDATE", "concern": "...", "question": "..." },
+    "competitionStrengthAnalyst": { "role": "Competition Strength Analyst", "name": "Competition Strength Analyst", "status": "ACTIVE", "stance": "HOME"|"DRAW"|"AWAY"|"GOALS"|"BTTS"|"NEUTRAL"|"REVALIDATE", "assessment": "...", "evidence": ["..."], "confidence": 80, "recommendation": "SUPPORT"|"CHALLENGE"|"REVALIDATE", "concern": "...", "question": "..." },
+    "dataForensicAnalyst": { "role": "Data Forensic Analyst", "name": "Data Forensic Analyst", "status": "ACTIVE", "stance": "HOME"|"DRAW"|"AWAY"|"GOALS"|"BTTS"|"NEUTRAL"|"REVALIDATE", "assessment": "...", "evidence": ["..."], "confidence": 80, "recommendation": "SUPPORT"|"CHALLENGE"|"REVALIDATE", "concern": "...", "question": "..." },
+    "contrarianAnalyst": { "role": "Contrarian Analyst", "name": "Contrarian Analyst", "status": "ACTIVE", "stance": "HOME"|"DRAW"|"AWAY"|"GOALS"|"BTTS"|"NEUTRAL"|"REVALIDATE", "assessment": "...", "evidence": ["..."], "confidence": 80, "recommendation": "SUPPORT"|"CHALLENGE"|"REVALIDATE", "concern": "...", "question": "..." }
+  },
+  "contrarianChallenge": {
+    "quantitativeLeaderChallenged": "...",
+    "challengeQuestion": "...",
+    "strongestAlternative": "...",
+    "evidenceForAlternative": "...",
+    "evidenceAgainstAlternative": "...",
+    "verdict": "CHALLENGE_SUCCEEDED"|"CHALLENGE_REJECTED"|"ALTERNATIVE_INFORMATIVE"|"UNRESOLVED",
+    "chairResponse": "..."
+  },
+  "debate": [
+    { "speaker": "Contrarian Analyst", "challenges": "...", "response": "..." }
+  ],
+  "chair": {
+    "summary": "Synthesized football verdict...",
+    "strongestCase": "...",
+    "strongestCountercase": "...",
+    "unresolvedQuestion": "...",
+    "decision": "SUPPORT"|"CHALLENGE"|"REVALIDATE",
+    "severity": "NORMAL"|"MINOR"|"SIGNIFICANT"|"SEVERE",
+    "revalidationReason": ""
+  },
+  "analystCall": {
+    "market": "1X2"|"TOTALS"|"BTTS",
+    "selection": "exact match from marketSurface",
+    "callType": "HOME_WIN"|"DRAW"|"AWAY_WIN"|"BTTS_YES"|"BTTS_NO"|"OVER_1_5"|"OVER_2_5"|"OVER_3_5"|"UNDER_1_5"|"UNDER_2_5"|"UNDER_3_5"|"DOUBLE_CHANCE"|"DNB",
+    "rationale": "Defensible football reason...",
+    "conviction": "LOW"|"MODERATE"|"HIGH"|"VERY_HIGH",
+    "evidenceQuality": "LIMITED"|"MODERATE"|"GOOD"|"STRONG",
+    "safeAlternative": "exact match from marketSurface",
+    "divergenceReasonCode": "DIRECTIONAL_SIGNAL_STRONGER_THAN_SAFE_TOTAL"|"RECENT_TRAJECTORY_OVERRIDES_LONG_TERM_BASELINE"|"OPPONENT_ADJUSTED_STRENGTH_GAP"|"TACTICAL_MISMATCH_SUPPORTS_DIRECTION"|"BTTS_MORE_INFORMATIVE_THAN_GOAL_TOTAL"|"QUANTITATIVE_LEADER_TOO_BROAD"|"NO_DIRECTIONAL_EDGE_RETAINED_TOTALS"|"NONE",
+    "divergenceReason": "...",
+    "guardrails": ["..."]
+  },
+  "marketReview": {
+    "quantitativeLeader": "...",
+    "selectedMarket": "...",
+    "safeAlternative": "...",
+    "panelView": "...",
+    "alternatives": ["..."]
+  },
+  "limitations": ["..."]
+}`;
   const user = `Run the complete AI Football Analyst Council.
 Determine the most informative, actionable football conclusion based on the evidence, not merely the highest probability.
 Remember: analystCall.selection MUST exactly match one selection in marketSurface.
@@ -765,8 +1187,18 @@ ${JSON.stringify(packet)}`;
         step.attempt,
         diagnostics,
       );
-      diag.structuredOutputValid = true;
+      diag.structuredOutputValid = cleaned.completeness.isComplete;
       diag.cleanPanelRejectedAnything = cleaned.rejectedAnything;
+
+      if (!cleaned.completeness.isComplete) {
+        diag.error = `Incomplete council response: missing ${cleaned.completeness.reasons.join("; ")}`;
+        console.warn(
+          `[GeminiCouncil] attempt=${step.attempt} model=${step.model} returned INCOMPLETE council (${cleaned.completeness.reasons.join(", ")})`,
+        );
+        attempts.push(diag);
+        continue;
+      }
+
       const applied = applyAnalystDecision(analysis, cleaned.panel);
       diag.decisionApplied = applied.applied;
       diagnostics.decisionApplied = applied.applied;
