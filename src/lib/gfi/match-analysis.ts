@@ -5,6 +5,7 @@ import { researchTeamOrFixture } from "./research-orchestrator";
 import { loadLivingEvidence } from "./living-evidence";
 import { requestFixtureMining } from "./on-demand-evidence";
 import { deriveConsensusActionability } from "./actionability";
+import { runFootballExpertPanel } from "./football-expert-panel";
 import type { FreeLeague } from "./intelligence";
 
 export type { AnalysisPipelineTrace, ServerMatchAnalysis } from "./server-pipeline";
@@ -50,10 +51,6 @@ export async function runMatchAnalysis(
   fixture: MatchRow,
   preloadedGroups?: FreeLeague[],
 ): Promise<ServerMatchAnalysis> {
-  // Batch supplies the already-loaded fixture universe so the single-match
-  // intelligence path can be reused without reloading the global fixture set.
-  // Research, living-reservoir warming, on-demand mining, persistence reload,
-  // authoritative modelling, ARRM, and actionability remain the same path.
   const groups = preloadedGroups ?? (await loadFreeFixtures());
   const [research, initialLiving] = await Promise.all([
     researchTeamOrFixture(`${fixture.home} vs ${fixture.away} ${fixture.date}`).catch((err) => {
@@ -220,6 +217,33 @@ export async function runMatchAnalysis(
     researchPolicy: "ACCUMULATE_AND_REUSE_PUBLIC_EVIDENCE_BEFORE_TERMINAL_NO_DATA_STATE",
     onDemandMiningAttempted: directLivingRows === 0,
   };
+
+  const footballExpertPanel = await runFootballExpertPanel({
+    fixture,
+    analysis,
+    evidenceFacts: (research.webEvidence?.structuredFacts ?? []).slice(0, 20).map((fact) => ({
+      title: fact.title,
+      factType: fact.factType,
+      sourceDomain: fact.sourceDomain,
+      sourceUrl: fact.sourceUrl,
+    })),
+  });
+  analysis.aiReasoningPacket = {
+    ...analysis.aiReasoningPacket,
+    footballExpertPanel,
+    aiRole: "QUANTITATIVE_AUTHORITY_WITH_AI_FOOTBALL_EXPERT_COUNCIL",
+  };
+  if (footballExpertPanel.status === "ACTIVE") {
+    const chair = footballExpertPanel.chair;
+    if (chair.decision !== "SUPPORT") {
+      analysis.warnings = [
+        ...new Set([
+          ...analysis.warnings,
+          `Football Expert Council: ${chair.decision} / ${chair.severity}. ${chair.revalidationReason || chair.summary}`,
+        ]),
+      ];
+    }
+  }
   return analysis;
 }
 
