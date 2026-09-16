@@ -48,9 +48,14 @@ function livingGroup(
 export async function runMatchAnalysis(
   code: string,
   fixture: MatchRow,
+  preloadedGroups?: FreeLeague[],
 ): Promise<ServerMatchAnalysis> {
-  const [groups, research, initialLiving] = await Promise.all([
-    loadFreeFixtures(),
+  // Batch analysis supplies the already-loaded fixture universe so the full
+  // single-match intelligence path does not reload the same global fixture
+  // dataset once per fixture. The research/living/evidence stages below remain
+  // identical for single and batch analysis.
+  const groups = preloadedGroups ?? (await loadFreeFixtures());
+  const [research, initialLiving] = await Promise.all([
     researchTeamOrFixture(`${fixture.home} vs ${fixture.away} ${fixture.date}`).catch((err) => {
       console.error("[runMatchAnalysis] researchTeamOrFixture failed:", err);
       return {
@@ -70,6 +75,8 @@ export async function runMatchAnalysis(
       h2hRows: [],
       homeTeamRows: [],
       awayTeamRows: [],
+      h2hRows: [],
+      publicRows: [],
       sourceFamilies: [],
       sourceFamilyCounts: {},
       matchCompleteness: 0,
@@ -131,9 +138,6 @@ export async function runMatchAnalysis(
   analysis.qualification = actionable;
   analysis.finalPrediction = actionable.actionableMarket?.selection ?? analysis.finalPrediction;
 
-  // The 1X2 decision is kept as a directional statement only when the chosen
-  // actionable market is itself 1X2. A totals/BTTS/DC action must not masquerade
-  // as a home/draw/away call.
   const actionSelection = actionable.actionableMarket?.selection ?? "";
   if (actionable.actionableMarket?.market === "1X2") {
     if (actionSelection === `${analysis.home.team} Win`) analysis.decision = "HOME EDGE";
