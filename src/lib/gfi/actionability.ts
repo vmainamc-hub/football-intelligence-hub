@@ -13,6 +13,7 @@ const over = (lambda: number, line: number) => {
   for (let k = 0; k <= Math.floor(line); k++) under += poisson(lambda, k);
   return clamp(1 - under);
 };
+
 function goalProbability(engine: AuthoritativeMatchAnalysis["engines"][number], line: number) {
   const v = engine.values ?? {};
   const total = Number(v.expectedGoals);
@@ -21,6 +22,7 @@ function goalProbability(engine: AuthoritativeMatchAnalysis["engines"][number], 
   const lambda = Number.isFinite(total) && total > 0 ? total : Number.isFinite(lh + la) ? lh + la : NaN;
   return Number.isFinite(lambda) ? over(lambda, line) : NaN;
 }
+
 function bttsProbability(engine: AuthoritativeMatchAnalysis["engines"][number]) {
   const v = engine.values ?? {};
   const direct = Number(v.yes);
@@ -29,54 +31,249 @@ function bttsProbability(engine: AuthoritativeMatchAnalysis["engines"][number]) 
   const la = Number(v.lambdaAway ?? v.meanAway);
   return Number.isFinite(lh) && Number.isFinite(la) ? clamp((1 - Math.exp(-lh)) * (1 - Math.exp(-la))) : NaN;
 }
+
+const GOAL_FAMILY_ENGINE_IDS = new Set(["GOALS", "BAYES_STRENGTH", "DIXON_COLES", "NEG_BINOMIAL"]);
+
+function singleEngineProbability(
+  e: AuthoritativeMatchAnalysis["engines"][number],
+  result: AuthoritativeMatchAnalysis,
+  market: string,
+  selection: string,
+): number {
+  const p = e.probabilities;
+  if (market === "1X2" && p) {
+    return selection === `${result.home.team} Win` ? p.home : selection === `${result.away.team} Win` ? p.away : p.draw;
+  }
+  if (market === "DOUBLE CHANCE" && p) {
+    return selection.includes("1X") ? p.home + p.draw : selection.includes("X2") ? p.draw + p.away : p.home + p.away;
+  }
+  if (market === "DRAW NO BET" && p) {
+    const denom = Math.max(0.0001, p.home + p.away);
+    return selection.includes(result.home.team) ? p.home / denom : p.away / denom;
+  }
+  if (market === "OVER/UNDER 1.5") {
+    const o = goalProbability(e, 1.5);
+    return selection.startsWith("Under") ? 1 - o : o;
+  }
+  if (market === "OVER/UNDER 2.5") {
+    const o = goalProbability(e, 2.5);
+    return selection.startsWith("Under") ? 1 - o : o;
+  }
+  if (market === "OVER/UNDER 3.5") {
+    const o = goalProbability(e, 3.5);
+    return selection.startsWith("Under") ? 1 - o : o;
+  }
+  if (market === "BTTS") {
+    const b = bttsProbability(e);
+    return selection.includes("NO") ? 1 - b : b;
+  }
+  return NaN;
+}
+
+/**
+ * Correlation-aware engine family vote aggregation.
+ * Correlated goal/Poisson engines (GOALS, BAYES_STRENGTH, DIXON_COLES, NEG_BINOMIAL)
+ * are consolidated into a single representative "GOALS_FAMILY" vote so their agreement
+ * is not multiplied as multiple independent votes.
+ * Independent engines (FORM, VENUE, ELO, LOGISTIC_REGRESSION) each cast an independent vote.
+ */
 function votesFor(result: AuthoritativeMatchAnalysis, market: string, selection: string): Vote[] {
-  // ARRM is a temporal weighting overlay on the same evidence, not an independent vote.
-  const engines = result.engines.filter(
-    (e) => e.id !== "CONSENSUS" && e.id !== "SIMULATION" && e.id !== "DATA_QUALITY" && e.id !== "MARKET" && e.id !== "MOMENTUM" && e.probabilities,
+  const validEngines = result.engines.filter(
+    (e) => e.id !== "CONSENSUS" && e.id !== "SIMULATION" && e.id !== "DATA_QUALITY" && e.id !== "MARKET" && e.id !== "MOMENTUM",
   );
-  return engines.map((e) => {
-    const p = e.probabilities!;
-    let probability = NaN;
-    if (market === "1X2") probability = selection === `${result.home.team} Win` ? p.home : selection === `${result.away.team} Win` ? p.away : p.draw;
-    else if (market === "DOUBLE CHANCE") probability = selection.includes("1X") ? p.home + p.draw : selection.includes("X2") ? p.draw + p.away : p.home + p.away;
-    else if (market === "DRAW NO BET") { const denom = Math.max(0.0001, p.home + p.away); probability = selection.includes(result.home.team) ? p.home / denom : p.away / denom; }
-    else if (market === "OVER/UNDER 1.5") { const o = goalProbability(e, 1.5); probability = selection.startsWith("Under") ? 1 - o : o; }
-    else if (market === "OVER/UNDER 2.5") { const o = goalProbability(e, 2.5); probability = selection.startsWith("Under") ? 1 - o : o; }
-    else if (market === "OVER/UNDER 3.5") { const o = goalProbability(e, 3.5); probability = selection.startsWith("Under") ? 1 - o : o; }
-    else if (market === "BTTS") { const b = bttsProbability(e); probability = selection.includes("NO") ? 1 - b : b; }
-    return Number.isFinite(probability) ? { probability: clamp(probability), weight: Math.max(0.15, Math.min(1.25, e.quality / 100)), engine: e.id } : null;
-  }).filter((x): x is Vote => Boolean(x));
+
+  const votes: Vote[] = [];
+
+  // 1. Independent non-goal engines
+  for (const e of validEngines) {
+    if (GOAL_FAMILY_ENGINE_IDS.has(e.id)) continue;
+    const prob = singleEngineProbability(e, result, market, selection);
+    if (Number.isFinite(prob)) {
+      votes.push({
+        probability: clamp(prob),
+        weight: Math.max(0.2, Math.min(1.25, (e.quality || 60) / 100)),
+        engine: e.id,
+      });
+    }
+  }
+
+  // 2. Aggregate correlated Goal Family engines into ONE consolidated vote
+  const goalEngines = validEngines.filter((e) => GOAL_FAMILY_ENGINE_IDS.has(e.id));
+  const goalProbs: { prob: number; weight: number }[] = [];
+  for (const ge of goalEngines) {
+    const prob = singleEngineProbability(ge, result, market, selection);
+    if (Number.isFinite(prob)) {
+      goalProbs.push({
+        prob: clamp(prob),
+        weight: Math.max(0.2, Math.min(1.25, (ge.quality || 70) / 100)),
+      });
+    }
+  }
+
+  if (goalProbs.length > 0) {
+    const sumW = goalProbs.reduce((acc, x) => acc + x.weight, 0);
+    const weightedProb = goalProbs.reduce((acc, x) => acc + x.prob * x.weight, 0) / sumW;
+    const avgWeight = sumW / goalProbs.length;
+    votes.push({
+      probability: clamp(weightedProb),
+      weight: avgWeight,
+      engine: "GOALS_FAMILY",
+    });
+  }
+
+  return votes;
 }
+
+/**
+ * Market statistical baselines and conviction thresholds.
+ * Every market specificity is normalized to 1.0 — no market receives an artificial category boost.
+ */
 function marketProfile(market: string, selection: string) {
-  if (market === "1X2") { if (selection === "Draw") return { threshold: 0.30, specificity: 1.10, family: "1X2" }; return { threshold: 0.45, specificity: 1.22, family: "1X2" }; }
-  if (market === "DOUBLE CHANCE") { if (selection.includes("1X") || selection.includes("X2")) return { threshold: 0.68, specificity: 1.04, family: "DOUBLE_CHANCE" }; return { threshold: 0.66, specificity: 0.96, family: "DOUBLE_CHANCE" }; }
-  if (market === "DRAW NO BET") return { threshold: 0.53, specificity: 1.08, family: "DNB" };
-  if (market === "OVER/UNDER 1.5") return { threshold: 0.72, specificity: 0.70, family: "TOTALS_15" };
-  if (market === "OVER/UNDER 2.5") return { threshold: 0.55, specificity: 1.08, family: "TOTALS_25" };
-  if (market === "OVER/UNDER 3.5") return { threshold: 0.70, specificity: 0.74, family: "TOTALS_35" };
-  if (market === "BTTS") return { threshold: 0.56, specificity: 1.08, family: "BTTS" };
-  return { threshold: 0.55, specificity: 0.85, family: market };
+  if (market === "1X2") {
+    if (selection.toLowerCase().includes("draw")) {
+      return { baseline: 0.27, threshold: 0.31, family: "1X2", specificity: 1.0 };
+    }
+    return { baseline: 0.40, threshold: 0.45, family: "1X2", specificity: 1.0 };
+  }
+  if (market === "DOUBLE CHANCE") {
+    return { baseline: 0.67, threshold: 0.68, family: "DOUBLE_CHANCE", specificity: 1.0 };
+  }
+  if (market === "DRAW NO BET") {
+    return { baseline: 0.50, threshold: 0.54, family: "DNB", specificity: 1.0 };
+  }
+  if (market === "OVER/UNDER 1.5") {
+    if (selection.startsWith("Under")) {
+      return { baseline: 0.26, threshold: 0.34, family: "TOTALS_15", specificity: 1.0 };
+    }
+    return { baseline: 0.74, threshold: 0.76, family: "TOTALS_15", specificity: 1.0 };
+  }
+  if (market === "OVER/UNDER 2.5") {
+    return { baseline: 0.50, threshold: 0.54, family: "TOTALS_25", specificity: 1.0 };
+  }
+  if (market === "OVER/UNDER 3.5") {
+    if (selection.startsWith("Under")) {
+      return { baseline: 0.72, threshold: 0.75, family: "TOTALS_35", specificity: 1.0 };
+    }
+    return { baseline: 0.28, threshold: 0.35, family: "TOTALS_35", specificity: 1.0 };
+  }
+  if (market === "BTTS") {
+    return { baseline: 0.50, threshold: 0.54, family: "BTTS", specificity: 1.0 };
+  }
+  return { baseline: 0.50, threshold: 0.54, family: market, specificity: 1.0 };
 }
+
 function candidateScore(candidate: MarketCandidate, votes: Vote[]) {
   const profile = marketProfile(candidate.market, candidate.selection);
   const totalWeight = votes.reduce((s, v) => s + v.weight, 0) || 1;
   const support = votes.reduce((s, v) => s + (v.probability >= profile.threshold ? v.weight : 0), 0) / totalWeight;
-  const meanVote = votes.length ? votes.reduce((s, v) => s + v.probability, 0) / votes.length : 0;
-  const aboveThreshold = clamp((candidate.modelProbability - profile.threshold) / Math.max(0.08, 1 - profile.threshold));
-  const engineAgreement = votes.length ? clamp(1 - votes.reduce((s, v) => s + Math.abs(v.probability - meanVote), 0) / votes.length / 0.35) : 0.25;
-  const directional = clamp((candidate.modelProbability - profile.threshold) / 0.25);
-  const supportStrength = support * 0.72 + engineAgreement * 0.28;
-  return { score: (aboveThreshold * 0.43 + supportStrength * 0.42 + directional * 0.15) * profile.specificity, support, agreement: engineAgreement, family: profile.family, threshold: profile.threshold };
+  const meanVote = votes.length ? votes.reduce((s, v) => s + v.probability, 0) / votes.length : candidate.modelProbability;
+
+  // Information edge: excess probability over natural market baseline
+  const excess = (candidate.modelProbability - profile.baseline) / Math.max(0.08, 1 - profile.baseline);
+
+  // Conviction: probability above the action threshold
+  const conviction = (candidate.modelProbability - profile.threshold) / Math.max(0.08, 1 - profile.threshold);
+
+  // Cross-family agreement without artificial inflation
+  const engineAgreement = votes.length
+    ? clamp(1 - votes.reduce((s, v) => s + Math.abs(v.probability - meanVote), 0) / votes.length / 0.35)
+    : 0.5;
+
+  // Genuine bookmaker odds edge if real odds are present (0 if no odds)
+  const oddsEdge = typeof candidate.edge === "number" && Number.isFinite(candidate.edge) ? Math.max(0, candidate.edge) : 0;
+
+  // Evidence adjustment: slight boost for supporting evidence, penalty for contradicting evidence
+  const evidenceAdj =
+    (candidate.supportingEvidence?.length ? 0.03 : 0) -
+    (candidate.contradictingEvidence?.length ? 0.05 : 0);
+
+  const score =
+    clamp(conviction, -0.4, 1.0) * 0.44 +
+    clamp(excess, -0.4, 1.0) * 0.26 +
+    support * 0.18 +
+    engineAgreement * 0.12 +
+    oddsEdge * 0.5 +
+    evidenceAdj;
+
+  return {
+    score,
+    conviction,
+    excess,
+    support,
+    agreement: engineAgreement,
+    family: profile.family,
+    threshold: profile.threshold,
+  };
 }
+
 export function deriveConsensusActionability(result: AuthoritativeMatchAnalysis): QualificationResult {
   const candidates = (result.marketCandidates ?? []).filter((c) => Number.isFinite(c.modelProbability));
   if (!candidates.length) {
-    const fallback: MarketCandidate = { market: "1X2", selection: `${result.home.team} Win`, modelProbability: result.probabilities.home, fairOdds: Number((1 / Math.max(0.01, result.probabilities.home)).toFixed(2)), valueClassification: "NO_ODDS", qualificationStatus: "QUALIFIED", whyConsidered: "Fallback from the authoritative 1X2 probability surface.", supportingEvidence: ["No separate market candidate surface was available; 1X2 home probability was used."], contradictingEvidence: [] };
-    return { qualified: true, actionableMarket: fallback, strongestMathematicalSignal: fallback, eligibilityPassed: true, rejectionReasons: [], statusMessage: "ACTIONABLE PREDICTION SELECTED FROM AUTHORITATIVE 1X2 SURFACE." };
+    const homeP = result.probabilities?.home ?? 0.33;
+    const fallback: MarketCandidate = {
+      market: "1X2",
+      selection: `${result.home.team} Win`,
+      modelProbability: homeP,
+      fairOdds: Number((1 / Math.max(0.01, homeP)).toFixed(2)),
+      valueClassification: "NO_ODDS",
+      qualificationStatus: "WATCH",
+      whyConsidered: "Fallback from the authoritative 1X2 probability surface.",
+      supportingEvidence: ["No separate market candidate surface was available."],
+      contradictingEvidence: [],
+    };
+    return {
+      qualified: false,
+      actionableMarket: fallback,
+      strongestMathematicalSignal: fallback,
+      eligibilityPassed: false,
+      rejectionReasons: ["No valid market candidate probability surface was available."],
+      statusMessage: "INSUFFICIENT PROBABILITY SURFACE FOR ACTIONABLE SELECTION.",
+    };
   }
-  const scored = candidates.map((candidate) => { const votes = votesFor(result, candidate.market, candidate.selection); const metrics = candidateScore(candidate, votes); return { candidate, votes, ...metrics }; }).sort((a, b) => b.score - a.score);
+
+  // Score all candidates using correlation-aware aggregation
+  const scored = candidates
+    .map((candidate) => {
+      const votes = votesFor(result, candidate.market, candidate.selection);
+      const metrics = candidateScore(candidate, votes);
+      return { candidate, votes, ...metrics };
+    })
+    .sort((a, b) => b.score - a.score);
+
   const best = scored[0];
-  const action: MarketCandidate = { ...best.candidate, qualificationStatus: "QUALIFIED", rejectionReason: undefined, supportingEvidence: [...best.candidate.supportingEvidence, `Dynamic market conviction: ${Math.round(best.candidate.modelProbability * 100)}% probability versus ${Math.round(best.threshold * 100)}% action threshold.`, `Cross-engine support: ${Math.round(best.support * 100)}% across ${best.votes.length} probability-producing engine families.`, `Engine agreement: ${Math.round(best.agreement * 100)}%.`, `Market family selected dynamically as ${best.family}; wide safety lines are deliberately down-weighted.`] };
-  for (const c of candidates) { c.qualificationStatus = c.selection === action.selection ? "QUALIFIED" : "WATCH"; c.rejectionReason = c.selection === action.selection ? undefined : "Not the strongest dynamic cross-engine conviction after market-specific normalization."; }
-  return { qualified: true, actionableMarket: action, strongestMathematicalSignal: best.candidate, eligibilityPassed: true, rejectionReasons: [], statusMessage: `DYNAMIC ACTION SELECTED: ${action.selection}. Market-specific conviction, cross-engine support, recent-form/venue signals and market specificity were balanced; no fixed Over 1.5 preference is used.` };
+  const isLimitedEvidence = result.quality < 40 || result.decision === "INSUFFICIENT INTELLIGENCE";
+
+  const action: MarketCandidate = {
+    ...best.candidate,
+    qualificationStatus: "QUALIFIED",
+    rejectionReason: undefined,
+    supportingEvidence: [
+      ...best.candidate.supportingEvidence,
+      `Authoritative conviction: ${Math.round(best.candidate.modelProbability * 100)}% probability vs ${Math.round(best.threshold * 100)}% threshold (information excess ${Math.round(best.excess * 100)}%).`,
+      `Independent family support: ${Math.round(best.support * 100)}% across ${best.votes.length} independent model families.`,
+      isLimitedEvidence
+        ? "Computed with limited fixture historical rows; Bayesian shrinkage applied to preserve calibrated uncertainty."
+        : "Supported by multi-family authoritative consensus.",
+    ],
+  };
+
+  for (const c of candidates) {
+    c.qualificationStatus = c.selection === action.selection ? "QUALIFIED" : "WATCH";
+    c.rejectionReason =
+      c.selection === action.selection
+        ? undefined
+        : "Not the highest dynamic conviction after normalized market-baseline evaluation.";
+  }
+
+  return {
+    qualified: true,
+    actionableMarket: action,
+    strongestMathematicalSignal: best.candidate,
+    eligibilityPassed: true,
+    rejectionReasons: [],
+    statusMessage: isLimitedEvidence
+      ? `ACTIONABLE PREDICTION (LIMITED EVIDENCE): ${action.selection}. Dynamic market conviction and independent family support evaluated with prior shrinkage.`
+      : `DYNAMIC ACTION SELECTED: ${action.selection}. Complete market surface evaluated without artificial market preference.`,
+  };
 }
+

@@ -275,16 +275,40 @@ export function analyzeActiveAuthoritatively(
   const homeAdaptive = buildAdaptiveSnapshot(f.home, rows, "home", asOf, f.away);
   const awayAdaptive = buildAdaptiveSnapshot(f.away, rows, "away", asOf, f.home);
 
+  // Competition goal priors from rows, otherwise standard baseline (1.35 home, 1.15 away)
+  let compHomeG = 1.35;
+  let compAwayG = 1.15;
+  const scoredRows = rows.filter((r) => typeof r.hg === "number" && typeof r.ag === "number");
+  if (scoredRows.length >= 6) {
+    const totalHg = scoredRows.reduce((s, r) => s + (r.hg ?? 0), 0);
+    const totalAg = scoredRows.reduce((s, r) => s + (r.ag ?? 0), 0);
+    compHomeG = clamp(totalHg / scoredRows.length, 0.9, 2.2);
+    compAwayG = clamp(totalAg / scoredRows.length, 0.7, 1.8);
+  }
+
+  // Bayesian shrinkage: sparse observations shrink to competition priors rather than collapsing to minimum clamps
+  const hN = homeAdaptive.played;
+  const aN = awayAdaptive.played;
+  const kPrior = 3; // pseudo-observations
+
+  const rawHomeFor = hN > 0 ? homeAdaptive.goalsFor / hN : compHomeG;
+  const rawAwayAgainst = aN > 0 ? awayAdaptive.goalsAgainst / aN : compHomeG;
+  const shrunkHomeFor = (rawHomeFor * hN + compHomeG * kPrior) / (hN + kPrior);
+  const shrunkAwayAgainst = (rawAwayAgainst * aN + compHomeG * kPrior) / (aN + kPrior);
+
+  const rawAwayFor = aN > 0 ? awayAdaptive.goalsFor / aN : compAwayG;
+  const rawHomeAgainst = hN > 0 ? homeAdaptive.goalsAgainst / hN : compAwayG;
+  const shrunkAwayFor = (rawAwayFor * aN + compAwayG * kPrior) / (aN + kPrior);
+  const shrunkHomeAgainst = (rawHomeAgainst * hN + compAwayG * kPrior) / (hN + kPrior);
+
   const homeLambda = clamp(
-    (homeAdaptive.goalsFor / Math.max(1, homeAdaptive.played)) * 0.62 +
-      (awayAdaptive.goalsAgainst / Math.max(1, awayAdaptive.played)) * 0.38,
-    0.35,
+    shrunkHomeFor * 0.62 + shrunkAwayAgainst * 0.38,
+    0.60,
     3.6,
   );
   const awayLambda = clamp(
-    (awayAdaptive.goalsFor / Math.max(1, awayAdaptive.played)) * 0.62 +
-      (homeAdaptive.goalsAgainst / Math.max(1, homeAdaptive.played)) * 0.38,
-    0.30,
+    shrunkAwayFor * 0.62 + shrunkHomeAgainst * 0.38,
+    0.50,
     3.4,
   );
   const adaptiveProb = oneX2(homeLambda, awayLambda);
@@ -303,7 +327,7 @@ export function analyzeActiveAuthoritatively(
   p.draw /= zP;
   p.away /= zP;
 
-  const totalMean = clamp(homeLambda + awayLambda, 1.2, 5.5);
+  const totalMean = clamp(homeLambda + awayLambda, 1.5, 5.5);
   const over = (line: number) => {
     let sum = 0;
     for (let k = 0; k <= Math.floor(line); k++) sum += poisson(totalMean, k);
@@ -473,34 +497,26 @@ export function analyzeActiveAuthoritatively(
   };
   const yes = bttsYes;
 
+  const dnbHome = p.home / Math.max(0.0001, p.home + p.away);
+  const dnbAway = p.away / Math.max(0.0001, p.home + p.away);
+
   const candidates: AuthoritativeMatchAnalysis["predictions"] = [
-    { market: "HOME", label: base.home.team, probability: p.home, strength: p.home - 1 / 3 },
-    { market: "DRAW", label: "Draw", probability: p.draw, strength: p.draw - 1 / 3 },
-    { market: "AWAY", label: base.away.team, probability: p.away, strength: p.away - 1 / 3 },
-    {
-      market: "OVER 1.5",
-      label: "Over 1.5",
-      probability: totalValues["over1.5"],
-      strength: totalValues["over1.5"] - 0.5,
-    },
-    {
-      market: "OVER 2.5",
-      label: "Over 2.5",
-      probability: totalValues["over2.5"],
-      strength: totalValues["over2.5"] - 0.5,
-    },
-    {
-      market: "OVER 3.5",
-      label: "Over 3.5",
-      probability: totalValues["over3.5"],
-      strength: totalValues["over3.5"] - 0.5,
-    },
-    {
-      market: "BTTS",
-      label: "BTTS",
-      probability: yes,
-      strength: yes - 0.5,
-    },
+    { market: "HOME", label: `${base.home.team} win`, probability: p.home, strength: Math.max(0, (p.home - 0.40) / 0.60) },
+    { market: "DRAW", label: "Draw", probability: p.draw, strength: Math.max(0, (p.draw - 0.27) / 0.73) },
+    { market: "AWAY", label: `${base.away.team} win`, probability: p.away, strength: Math.max(0, (p.away - 0.40) / 0.60) },
+    { market: "DOUBLE CHANCE", label: `${base.home.team} or Draw (1X)`, probability: p.home + p.draw, strength: Math.max(0, (p.home + p.draw - 0.67) / 0.33) },
+    { market: "DOUBLE CHANCE", label: `Draw or ${base.away.team} (X2)`, probability: p.draw + p.away, strength: Math.max(0, (p.draw + p.away - 0.67) / 0.33) },
+    { market: "DOUBLE CHANCE", label: `${base.home.team} or ${base.away.team} (12)`, probability: p.home + p.away, strength: Math.max(0, (p.home + p.away - 0.67) / 0.33) },
+    { market: "DRAW NO BET", label: `${base.home.team} DNB`, probability: dnbHome, strength: Math.max(0, (dnbHome - 0.50) / 0.50) },
+    { market: "DRAW NO BET", label: `${base.away.team} DNB`, probability: dnbAway, strength: Math.max(0, (dnbAway - 0.50) / 0.50) },
+    { market: "OVER 1.5", label: "Over 1.5", probability: totalValues["over1.5"], strength: Math.max(0, (totalValues["over1.5"] - 0.74) / 0.26) },
+    { market: "UNDER 1.5", label: "Under 1.5", probability: 1 - totalValues["over1.5"], strength: Math.max(0, (1 - totalValues["over1.5"] - 0.26) / 0.74) },
+    { market: "OVER 2.5", label: "Over 2.5", probability: totalValues["over2.5"], strength: Math.max(0, (totalValues["over2.5"] - 0.50) / 0.50) },
+    { market: "UNDER 2.5", label: "Under 2.5", probability: 1 - totalValues["over2.5"], strength: Math.max(0, (1 - totalValues["over2.5"] - 0.50) / 0.50) },
+    { market: "OVER 3.5", label: "Over 3.5", probability: totalValues["over3.5"], strength: Math.max(0, (totalValues["over3.5"] - 0.28) / 0.72) },
+    { market: "UNDER 3.5", label: "Under 3.5", probability: 1 - totalValues["over3.5"], strength: Math.max(0, (1 - totalValues["over3.5"] - 0.72) / 0.28) },
+    { market: "BTTS", label: "BTTS — YES", probability: yes, strength: Math.max(0, (yes - 0.50) / 0.50) },
+    { market: "BTTS", label: "BTTS — NO", probability: 1 - yes, strength: Math.max(0, (1 - yes - 0.50) / 0.50) },
   ]
     .filter((x) => Number.isFinite(x.probability))
     .sort((a, b) => b.strength - a.strength)

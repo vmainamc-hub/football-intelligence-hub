@@ -121,21 +121,23 @@ function candidateToSignal(result: ServerMatchAnalysis, intent: BatchIntent): Ma
   return { market: action.market, selection: action.selection, probability: action.modelProbability, confidence: result.confidence, tier: "PRIMARY", rationale: action.whyConsidered ?? "Selected by the authoritative cross-engine actionability layer." };
 }
 
-function marketDynamicWeight(signal: MarketSignal) {
-  if (signal.market === "1X2") return 1.16;
-  if (signal.market === "DOUBLE CHANCE") return 1.08;
-  if (signal.market === "DRAW NO BET") return 1.08;
-  if (signal.market === "OVER/UNDER 2.5") return 1.10;
-  if (signal.market === "BTTS") return 1.08;
-  if (signal.market === "OVER/UNDER 1.5") return 0.70;
-  if (signal.market === "OVER/UNDER 3.5") return 0.76;
-  return 0.9;
-}
 function selectionScore(result: ServerMatchAnalysis, signal: MarketSignal, mode: BatchIntent["mode"]) {
-  const base = signal.probability * 0.38 + (result.confidence / 100) * 0.20 + (result.robustness.score / 100) * 0.16 + (result.quality / 100) * 0.16 + result.consensus.agreement * 0.10;
+  const base =
+    signal.probability * 0.38 +
+    (result.confidence / 100) * 0.20 +
+    (result.robustness.score / 100) * 0.16 +
+    (result.quality / 100) * 0.16 +
+    result.consensus.agreement * 0.10;
   const conflictPenalty = result.consensus.conflict * 0.20;
-  const modeBonus = mode === "SAFEST" && result.risk === "LOW" ? 0.06 : mode === "SAFEST" && result.risk === "MODERATE" ? 0.02 : mode === "SLIP" ? 0.02 : 0;
-  return (base + modeBonus - conflictPenalty) * marketDynamicWeight(signal);
+  const modeBonus =
+    mode === "SAFEST" && result.risk === "LOW"
+      ? 0.06
+      : mode === "SAFEST" && result.risk === "MODERATE"
+        ? 0.02
+        : mode === "SLIP"
+          ? 0.02
+          : 0;
+  return base + modeBonus - conflictPenalty;
 }
 function targetCandidates(fixtures: ReturnType<typeof uniqueFixtures>, intent: BatchIntent) { const today = todayEAT(); return fixtures.filter(fixture => intent.scope === "TODAY" ? dateKey(fixture.date) === today : dateKey(fixture.date) >= today); }
 function marketFamily(signal: MarketSignal) {
@@ -177,16 +179,16 @@ export async function runBatchAnalysisInternal(data: BatchAnalysisInput): Promis
   });
 
   const ranked = analysed.sort((a, b) => b.score - a.score);
-  const selected: BatchSelection[] = [], usedFixtures = new Set<string>(), familyCounts = new Map<string, number>();
+  const selected: BatchSelection[] = [], usedFixtures = new Set<string>();
   for (const row of ranked) {
-    const id = fixtureId(row.fixture); if (usedFixtures.has(id)) continue;
-    const family = marketFamily(row.market), count = familyCounts.get(family) ?? 0;
-    const pressure = count === 0 ? 0 : Math.min(0.28, 0.055 * count * (family === "TOTALS_15" || family === "TOTALS_35" ? 1.35 : 1));
-    const adjusted = row.score - pressure;
-    if (adjusted < -1) continue;
+    const id = fixtureId(row.fixture);
+    if (usedFixtures.has(id)) continue;
     usedFixtures.add(id);
-    selected.push({ ...row, score: Number(adjusted.toFixed(4)), reason: `${row.reason} Portfolio family ${family}; diversity pressure ${Math.round(pressure * 100)}%.` });
-    familyCounts.set(family, count + 1);
+    selected.push({
+      ...row,
+      score: Number(row.score.toFixed(4)),
+      reason: row.reason,
+    });
     if (selected.length >= intent.count) break;
   }
   const generatedAt = new Date().toISOString();

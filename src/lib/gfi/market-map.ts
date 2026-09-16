@@ -11,14 +11,44 @@ export function buildSevenMarketComparison(result: AuthoritativeMatchAnalysis): 
 export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): MarketSignal[] { if (!result?.probabilities) return [{ market: "1X2", selection: "NO MARKET DATA", probability: 0, confidence: 0, tier: "WATCH", rationale: "No complete authoritative probability surface is available." }]; const { home, draw, away } = result.probabilities, ht = result.home.team, at = result.away.team, winner = home >= draw && home >= away ? ht : away >= draw ? at : "DRAW"; const out: MarketSignal[] = [signal("1X2", winner === "DRAW" ? "DRAW" : `${winner} WIN`, Math.max(home, draw, away), result, `Highest 1X2 probability ${pct(Math.max(home, draw, away))}%.`)]; const dc = [{ selection: "1X", probability: home + draw }, { selection: "X2", probability: draw + away }, { selection: "12", probability: home + away }].sort((a, b) => b.probability - a.probability)[0]; out.push(signal("DOUBLE CHANCE", dc.selection, dc.probability, result, `Two-result coverage ${pct(dc.probability)}%.`)); const dnbH = home / Math.max(0.0001, home + away), dnbA = away / Math.max(0.0001, home + away); out.push(signal("DRAW NO BET", dnbH >= dnbA ? `DNB — ${ht}` : `DNB — ${at}`, Math.max(dnbH, dnbA), result, "Draw removed from the win comparison.")); for (const line of [1.5, 2.5, 3.5] as const) { const o = Number(goal(result, `over${line}`)); if (!Number.isFinite(o)) continue; out.push(signal(`OVER/UNDER ${line}`, o >= 0.5 ? `OVER ${line}` : `UNDER ${line}`, Math.max(o, 1 - o), result, `Goal model probability ${pct(Math.max(o, 1 - o))}%.`)); } const b = Number(btts(result)); if (Number.isFinite(b)) out.push(signal("BTTS", b >= 0.5 ? "BTTS — YES" : "BTTS — NO", Math.max(b, 1 - b), result, `BTTS selection probability ${pct(Math.max(b, 1 - b))}%.`)); return out; }
 export function bestQualifiedMarket(result: AuthoritativeMatchAnalysis): MarketSignal {
   const markets = buildMainstreamMarketMap(result);
-  if (!markets.length || markets[0].selection === "NO MARKET DATA") return markets[0] ?? { market: "1X2", selection: "NO MARKET DATA", probability: 0, confidence: 0, tier: "WATCH", rationale: "No market observations were produced." };
+  if (!markets.length || markets[0].selection === "NO MARKET DATA") {
+    return (
+      markets[0] ?? {
+        market: "1X2",
+        selection: "NO MARKET DATA",
+        probability: 0,
+        confidence: 0,
+        tier: "WATCH",
+        rationale: "No market observations were produced.",
+      }
+    );
+  }
   const selected = result.qualification?.actionableMarket;
-  if (result.qualification?.qualified && selected) {
-    const mapped = markets.find(m => m.selection.toLowerCase() === selected.selection.toLowerCase()) ?? markets.find(m => m.market === selected.market && Math.abs(m.probability - selected.modelProbability) < 0.03);
-    if (mapped) return { ...mapped, tier: mapped.probability >= 0.62 ? "PRIMARY" : mapped.probability >= 0.56 ? "SECONDARY" : "WATCH", rationale: `${selected.whyConsidered} ${selected.supportingEvidence.join(" ")} This selection is chosen from cross-engine consensus, not lowest-odds safety.` };
+  if (selected && Number.isFinite(selected.modelProbability)) {
+    const market = (selected.market as MainstreamMarket) || "1X2";
+    const mapped =
+      markets.find((m) => m.selection.toLowerCase() === selected.selection.toLowerCase()) ??
+      markets.find((m) => m.market === selected.market);
+    const prob = selected.modelProbability;
+    const conf = result.confidence ?? 50;
+    const t: MarketSignal["tier"] =
+      conf < 45 ? "WATCH" : prob >= 0.62 ? "PRIMARY" : prob >= 0.54 ? "SECONDARY" : "WATCH";
+
+    return {
+      market: mapped?.market ?? market,
+      selection: selected.selection,
+      probability: clamp(prob),
+      confidence: Math.round(conf),
+      tier: t,
+      rationale: `${selected.whyConsidered ?? ""} ${selected.supportingEvidence?.join(" ") ?? ""} Authoritative cross-engine selection.`.trim(),
+    };
   }
   const ranked = markets.slice().sort((a, b) => b.probability - a.probability);
   const best = ranked[0];
-  return { ...best, tier: best.probability >= 0.62 ? "PRIMARY" : best.probability >= 0.56 ? "SECONDARY" : "WATCH", rationale: `${best.rationale} No separate actionable consensus was attached; displayed as the strongest mathematical signal only.` };
+  return {
+    ...best,
+    tier: best.probability >= 0.62 ? "PRIMARY" : best.probability >= 0.56 ? "SECONDARY" : "WATCH",
+    rationale: `${best.rationale} No separate actionable consensus was attached; displayed as the strongest mathematical signal only.`,
+  };
 }
 export function primaryMarket(result: AuthoritativeMatchAnalysis) { return buildMainstreamMarketMap(result)[0] ?? { market: "1X2", selection: "NO MARKET DATA", probability: 0, confidence: 0, tier: "WATCH" as const, rationale: "No market data." }; }

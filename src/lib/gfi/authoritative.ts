@@ -750,23 +750,44 @@ export function buildAuthoritativeMarketCandidates(
   let qualified = false;
   let actionableMarket: MarketCandidate | null = null;
 
+  const marketThreshold = (c: MarketCandidate): { threshold: number; baseline: number } => {
+    if (c.market === "1X2") {
+      if (c.selection.toLowerCase().includes("draw")) return { threshold: 0.31, baseline: 0.27 };
+      return { threshold: 0.45, baseline: 0.40 };
+    }
+    if (c.market === "DOUBLE CHANCE") return { threshold: 0.68, baseline: 0.67 };
+    if (c.market === "DRAW NO BET") return { threshold: 0.54, baseline: 0.50 };
+    if (c.market === "OVER/UNDER 1.5") {
+      return c.selection.startsWith("Under") ? { threshold: 0.34, baseline: 0.26 } : { threshold: 0.76, baseline: 0.74 };
+    }
+    if (c.market === "OVER/UNDER 2.5") return { threshold: 0.54, baseline: 0.50 };
+    if (c.market === "OVER/UNDER 3.5") {
+      return c.selection.startsWith("Under") ? { threshold: 0.75, baseline: 0.72 } : { threshold: 0.35, baseline: 0.28 };
+    }
+    if (c.market === "BTTS") return { threshold: 0.54, baseline: 0.50 };
+    return { threshold: 0.54, baseline: 0.50 };
+  };
+
   if (isEligible) {
     const qualifiedCandidates = candidates.filter((c) => {
-      if (c.market === "1X2") return c.modelProbability >= 0.54;
-      if (c.market === "DOUBLE CHANCE") return c.modelProbability >= 0.72;
-      if (c.market === "DRAW NO BET") return c.modelProbability >= 0.62;
-      if (c.market === "OVER/UNDER 1.5") return c.modelProbability >= 0.75;
-      if (c.market === "OVER/UNDER 2.5") return c.modelProbability >= 0.58;
-      if (c.market === "OVER/UNDER 3.5") return c.modelProbability >= 0.74;
-      if (c.market === "BTTS") return c.modelProbability >= 0.60;
-      return false;
+      const { threshold } = marketThreshold(c);
+      return c.modelProbability >= threshold;
     });
 
     if (qualifiedCandidates.length > 0) {
       qualified = true;
       actionableMarket = qualifiedCandidates.sort((a, b) => {
-        const score = (x: MarketCandidate) => x.modelProbability * 0.5 + (x.edge ?? 0) * 2;
-        return score(b) - score(a);
+        const { threshold: tA, baseline: bA } = marketThreshold(a);
+        const { threshold: tB, baseline: bB } = marketThreshold(b);
+        const convA = (a.modelProbability - tA) / Math.max(0.08, 1 - tA);
+        const convB = (b.modelProbability - tB) / Math.max(0.08, 1 - tB);
+        const excA = (a.modelProbability - bA) / Math.max(0.08, 1 - bA);
+        const excB = (b.modelProbability - bB) / Math.max(0.08, 1 - bB);
+        const edgeA = hasOdds && typeof a.edge === "number" ? a.edge * 2 : 0;
+        const edgeB = hasOdds && typeof b.edge === "number" ? b.edge * 2 : 0;
+        const scoreA = convA * 0.65 + excA * 0.35 + edgeA;
+        const scoreB = convB * 0.65 + excB * 0.35 + edgeB;
+        return scoreB - scoreA;
       })[0];
       actionableMarket.qualificationStatus = "QUALIFIED";
     }
@@ -1007,50 +1028,29 @@ export function analyzeAuthoritatively(
     conflict,
   );
 
+  const dnbHome = probs.home / Math.max(0.0001, probs.home + probs.away);
+  const dnbAway = probs.away / Math.max(0.0001, probs.home + probs.away);
+
   const candidates: ActionablePrediction[] = [
-    {
-      market: "HOME",
-      label: home.team,
-      probability: probs.home,
-      strength: Math.max(0, probs.home - 1 / 3),
-    },
-    {
-      market: "DRAW",
-      label: "Draw",
-      probability: probs.draw,
-      strength: Math.max(0, probs.draw - 1 / 3),
-    },
-    {
-      market: "AWAY",
-      label: away.team,
-      probability: probs.away,
-      strength: Math.max(0, probs.away - 1 / 3),
-    },
-    {
-      market: "OVER 1.5",
-      label: "Over 1.5",
-      probability: totals["over1.5"] ?? 0,
-      strength: Math.max(0, (totals["over1.5"] ?? 0) - 0.55),
-    },
-    {
-      market: "OVER 2.5",
-      label: "Over 2.5",
-      probability: totals["over2.5"] ?? 0,
-      strength: Math.max(0, (totals["over2.5"] ?? 0) - 0.5),
-    },
-    {
-      market: "OVER 3.5",
-      label: "Over 3.5",
-      probability: totals["over3.5"] ?? 0,
-      strength: Math.max(0, (totals["over3.5"] ?? 0) - 0.4),
-    },
-    { market: "BTTS", label: "BTTS", probability: btts.yes, strength: Math.max(0, btts.yes - 0.5) },
+    { market: "HOME", label: `${home.team} win`, probability: probs.home, strength: Math.max(0, (probs.home - 0.40) / 0.60) },
+    { market: "DRAW", label: "Draw", probability: probs.draw, strength: Math.max(0, (probs.draw - 0.27) / 0.73) },
+    { market: "AWAY", label: `${away.team} win`, probability: probs.away, strength: Math.max(0, (probs.away - 0.40) / 0.60) },
+    { market: "DOUBLE CHANCE", label: `${home.team} or Draw (1X)`, probability: probs.home + probs.draw, strength: Math.max(0, (probs.home + probs.draw - 0.67) / 0.33) },
+    { market: "DOUBLE CHANCE", label: `Draw or ${away.team} (X2)`, probability: probs.draw + probs.away, strength: Math.max(0, (probs.draw + probs.away - 0.67) / 0.33) },
+    { market: "DOUBLE CHANCE", label: `${home.team} or ${away.team} (12)`, probability: probs.home + probs.away, strength: Math.max(0, (probs.home + probs.away - 0.67) / 0.33) },
+    { market: "DRAW NO BET", label: `${home.team} DNB`, probability: dnbHome, strength: Math.max(0, (dnbHome - 0.50) / 0.50) },
+    { market: "DRAW NO BET", label: `${away.team} DNB`, probability: dnbAway, strength: Math.max(0, (dnbAway - 0.50) / 0.50) },
+    { market: "OVER 1.5", label: "Over 1.5", probability: totals["over1.5"] ?? 0, strength: Math.max(0, ((totals["over1.5"] ?? 0) - 0.74) / 0.26) },
+    { market: "UNDER 1.5", label: "Under 1.5", probability: 1 - (totals["over1.5"] ?? 0), strength: Math.max(0, (1 - (totals["over1.5"] ?? 0) - 0.26) / 0.74) },
+    { market: "OVER 2.5", label: "Over 2.5", probability: totals["over2.5"] ?? 0, strength: Math.max(0, ((totals["over2.5"] ?? 0) - 0.50) / 0.50) },
+    { market: "UNDER 2.5", label: "Under 2.5", probability: 1 - (totals["over2.5"] ?? 0), strength: Math.max(0, (1 - (totals["over2.5"] ?? 0) - 0.50) / 0.50) },
+    { market: "OVER 3.5", label: "Over 3.5", probability: totals["over3.5"] ?? 0, strength: Math.max(0, ((totals["over3.5"] ?? 0) - 0.28) / 0.72) },
+    { market: "UNDER 3.5", label: "Under 3.5", probability: 1 - (totals["over3.5"] ?? 0), strength: Math.max(0, (1 - (totals["over3.5"] ?? 0) - 0.72) / 0.28) },
+    { market: "BTTS", label: "BTTS — YES", probability: btts.yes, strength: Math.max(0, (btts.yes - 0.50) / 0.50) },
+    { market: "BTTS", label: "BTTS — NO", probability: btts.no, strength: Math.max(0, (btts.no - 0.50) / 0.50) },
   ];
   const predictions = candidates
-    .filter(
-      (p) =>
-        p.probability >= (p.market === "OVER 1.5" ? 0.62 : p.market === "OVER 3.5" ? 0.55 : 0.57),
-    )
+    .filter((p) => p.strength > 0)
     .sort((a, b) => b.strength - a.strength)
     .slice(0, 5);
   const finalPrediction =
