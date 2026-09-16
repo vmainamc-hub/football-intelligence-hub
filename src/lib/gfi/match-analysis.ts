@@ -1,9 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { loadFreeFixtures, type MatchRow } from "./intelligence";
 import { analyzeLoadedFixture, type ServerMatchAnalysis } from "./server-pipeline";
-import { researchFixture, researchTeamOrFixture } from "./research-orchestrator";
+import { researchTeamOrFixture } from "./research-orchestrator";
 import { loadLivingEvidence } from "./living-evidence";
 import { requestFixtureMining } from "./on-demand-evidence";
+import { deriveConsensusActionability } from "./actionability";
 import type { FreeLeague } from "./intelligence";
 
 export type { AnalysisPipelineTrace, ServerMatchAnalysis } from "./server-pipeline";
@@ -81,8 +82,6 @@ export async function runMatchAnalysis(
   ]);
   let living = initialLiving;
 
-  // Sparse fixtures get one bounded mining attempt before the terminal analysis.
-  // This makes the living evidence path actionable rather than merely passive.
   const directLivingRows =
     living.matchRows.length +
     living.homeTeamRows.length +
@@ -123,6 +122,29 @@ export async function runMatchAnalysis(
       living.awayTeamRows.length,
   );
   analysis.pipeline.competitionsLoaded = expandedGroups.length;
+
+  // Actionability is deliberately downstream of the single authoritative engine.
+  // It does not create a second prediction model: it compares the authoritative
+  // market candidates by cross-engine support and chooses one actionable market.
+  const actionable = deriveConsensusActionability(analysis);
+  analysis.qualification = actionable;
+  analysis.finalPrediction = actionable.actionableMarket?.selection ?? analysis.finalPrediction;
+  analysis.aiReasoningPacket = {
+    ...analysis.aiReasoningPacket,
+    qualification: actionable,
+    actionablePrediction: actionable.actionableMarket,
+    actionabilityPolicy:
+      "Every fixture receives one best-supported actionable market when a probability surface exists. Selection is based on cross-engine support and market specificity, not lowest odds. Uncertainty remains visible in confidence/risk/evidence health.",
+  };
+  if (actionable.actionableMarket) {
+    analysis.warnings = [
+      ...new Set([
+        ...analysis.warnings,
+        actionable.statusMessage,
+      ]),
+    ];
+  }
+
   const additionalWarnings: string[] = [
     `Public evidence ladder: ${research.coverage}% live/public coverage across ${research.distinctSources} live source families (${research.reservoirMatches} stored observations, ${research.liveMatches} live/public observations, ${research.webMatches ?? 0} web observations).`,
     `Living evidence cell: ${living.evidenceCount} accumulated observations, ${living.sourceCount} source records, ${living.sourceFamilies.length} distinct source families, ${living.matchCompleteness}% match completeness.`,
@@ -186,19 +208,6 @@ export async function runMatchAnalysis(
     researchPolicy: "ACCUMULATE_AND_REUSE_PUBLIC_EVIDENCE_BEFORE_TERMINAL_NO_DATA_STATE",
     onDemandMiningAttempted: directLivingRows === 0,
   };
-  if (analysis.home.played < 4 || analysis.away.played < 4) {
-    analysis.warnings = [
-      ...new Set([
-        ...analysis.warnings,
-        `Research-expanded team sample remains ${analysis.home.played} home-team observations / ${analysis.away.played} away-team observations; result remains mathematically available but downstream market qualification will not authorize a strong action.`,
-      ]),
-    ];
-    analysis.aiReasoningPacket = {
-      ...analysis.aiReasoningPacket,
-      researchState: "CONTINUE_PUBLIC_RESEARCH",
-      predictionSuppressed: false,
-    };
-  }
   return analysis;
 }
 
