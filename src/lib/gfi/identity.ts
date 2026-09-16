@@ -31,16 +31,20 @@ export function isCompletedMatch(match: {
 }
 
 const TEAM_NOISE =
-  /\b(fc|afc|cf|sc|ac|as|ss|ssc|cd|ud|sd|rc|rcd|club|clube|calcio|football|futbol|futebol|sporting clube|sporting club|deportivo|association)\b/g;
+  /\b(fc|afc|cf|sc|ac|as|ss|ssc|cd|ud|sd|rc|rcd|club|clube|calcio|football|futbol|futebol|sporting clube|sporting club|deportivo|association|mfk|fk|sk|nk|bk|tj|ifk|msk|cska|gnk|hsk)\b/g;
 
 export function sanitizeTeamName(value: string): string {
   if (!value) return "";
   let s = value.trim();
-  // Strip score/minute/ranking numeric prefixes like "00 ", "45 ", "01 ", "1. ", "0-0 ", "12:30 "
-  s = s.replace(/^\s*\d{1,3}\s*[-–.:]?\s+/i, "");
-  s = s.replace(/^\s*\d{1,2}:\d{2}\s+/i, "");
-  // Strip bracketed numbers like "[1] ", "(12) "
-  s = s.replace(/^\s*[\[(]\d+[\])]\s*/i, "");
+  // Repeatedly strip leading score/minute/ranking numeric prefixes like "00 ", "45 ", "01 ", "1. ", "0-0 ", "12:30 "
+  let prev = "";
+  while (prev !== s) {
+    prev = s;
+    s = s.replace(/^\s*\d{1,3}\s*[-–.:]?\s+/i, "");
+    s = s.replace(/^\s*\d{1,2}:\d{2}\s+/i, "");
+    // Strip bracketed numbers like "[1] ", "(12) "
+    s = s.replace(/^\s*[([]\d+[)\]]\s*/i, "");
+  }
   // Strip trailing noise like " - 1st", " (R)", etc.
   s = s.replace(/\s+-\s+\d+.*$/, "");
   return s.trim() || value.trim();
@@ -148,6 +152,31 @@ const TEAM_ALIASES: Record<string, string> = {
   arsenal: "Arsenal",
   chelsea: "Chelsea",
   liverpool: "Liverpool",
+  lugano: "Lugano",
+  "fc lugano": "Lugano",
+  "st gallen": "St. Gallen",
+  "saint gallen": "St. Gallen",
+  "fc st gallen": "St. Gallen",
+  "fc saint gallen": "St. Gallen",
+  havirov: "Havirov",
+  "mfk havirov": "Havirov",
+  zlin: "Zlin",
+  "fc zlin": "Zlin",
+  "fastav zlin": "Zlin",
+  "ararat armenia": "Ararat Armenia",
+  "ararat armenia fc": "Ararat Armenia",
+  "fc ararat armenia": "Ararat Armenia",
+  "sparta prague": "Sparta Prague",
+  "sparta praha": "Sparta Prague",
+  "ac sparta praha": "Sparta Prague",
+  "ac sparta prague": "Sparta Prague",
+  "el gouna": "El Gouna",
+  "el gouna fc": "El Gouna",
+  kharkiv: "Kharkiv",
+  "metalist 1925 kharkiv": "Kharkiv",
+  "metalist 1925": "Kharkiv",
+  "polissya zhytomyr": "Polissya Zhytomyr",
+  "polissya zhytomyr u19": "Polissya Zhytomyr U19",
 };
 
 /** Human-facing canonical team name, so one club is never stored twice. */
@@ -156,7 +185,7 @@ export function canonicalTeamName(value: string): string {
   const key = canonicalTeamKey(sanitized);
   if (TEAM_ALIASES[key]) return TEAM_ALIASES[key];
   const cleaned = sanitized
-    .replace(/\b(FC|AFC|CF|SC|SSC)\b/gi, "")
+    .replace(/\b(FC|AFC|CF|SC|SSC|MFK|FK|SK|NK|BK|TJ|IFK|MSK)\b/gi, "")
     .trim()
     .replace(/\s+/g, " ");
   const cleanedKey = canonicalTeamKey(cleaned);
@@ -262,3 +291,15 @@ export function canonicalCompetitionName(value: string | undefined): string {
   const key = competitionKey(raw);
   return COMPETITION_ALIASES[key] ?? (raw || "Worldwide Football");
 }
+
+export function canonicalFixture<T extends { home: string; away: string; league?: string }>(
+  fixture: T,
+): T {
+  return {
+    ...fixture,
+    home: canonicalTeamName(fixture.home),
+    away: canonicalTeamName(fixture.away),
+    league: canonicalCompetitionName(fixture.league),
+  };
+}
+

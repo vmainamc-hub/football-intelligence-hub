@@ -1,6 +1,6 @@
 import type { MatchRow } from "./intelligence";
 import type { EngineOutput, AuthoritativeMatchAnalysis } from "./authoritative";
-import { analyzeAuthoritatively } from "./authoritative";
+import { analyzeAuthoritatively, buildAuthoritativeMarketCandidates } from "./authoritative";
 import { runAdvancedEngines } from "./advanced-engines";
 import { simulationEngineOutput } from "./simulation-engine";
 
@@ -364,6 +364,24 @@ export function analyzeActiveAuthoritatively(
     .filter((x) => Number.isFinite(x.probability))
     .sort((a, b) => b.strength - a.strength)
     .slice(0, 5);
+  const totalValues = Object.fromEntries(
+    ["over0.5", "over1.5", "over2.5", "over3.5"].map((k) => [k, Number(totals[k] ?? 0)]),
+  );
+  const yes = Number(bttsE.yes ?? 0);
+
+  const marketCandidateResults = buildAuthoritativeMarketCandidates(
+    p,
+    totalValues,
+    { yes, no: 1 - yes },
+    base.home.team,
+    base.away.team,
+    base.evidenceState ?? (teamSample === 0 ? "PRIOR-BASED" : teamSample < 8 ? "LIMITED EVIDENCE" : "VERIFIED"),
+    teamSample,
+    base.asymmetricEvidence,
+    confidence,
+    conflict,
+  );
+
   const finalPrediction =
     decision === "INSUFFICIENT INTELLIGENCE"
       ? "INSUFFICIENT INTELLIGENCE"
@@ -373,7 +391,10 @@ export function analyzeActiveAuthoritatively(
           ? `${base.away.team} win`
           : decision === "DRAW LEAN"
             ? "Draw"
-            : (candidates[0]?.label ?? "No strong prediction");
+            : marketCandidateResults.qualification.qualified &&
+                marketCandidateResults.qualification.actionableMarket
+              ? marketCandidateResults.qualification.actionableMarket.selection
+              : (candidates[0]?.label ?? "No strong prediction");
   const sparseWarning =
     teamSample === 0
       ? `No direct historical match was matched to either team in the assembled context. Probabilities use an explicit global prior (${globalN} completed rows), not a low-goal fallback.`
@@ -387,13 +408,9 @@ export function analyzeActiveAuthoritatively(
       ) as string[],
     ),
   ];
-  const totalValues = Object.fromEntries(
-    ["over0.5", "over1.5", "over2.5", "over3.5"].map((k) => [k, Number(totals[k] ?? 0)]),
-  );
-  const yes = Number(bttsE.yes ?? 0);
   return {
     ...base,
-    analysisVersion: "gfi-authoritative-v8",
+    analysisVersion: "gfi-authoritative-v9",
     engines,
     evidenceLedger: ledger,
     probabilities: p,
@@ -406,6 +423,10 @@ export function analyzeActiveAuthoritatively(
     finalPrediction,
     predictedScore,
     predictions: candidates,
+    marketCandidates: marketCandidateResults.candidates,
+    valueAnalysis: marketCandidateResults.valueAnalysis,
+    contradictionAnalysis: marketCandidateResults.contradiction,
+    qualification: marketCandidateResults.qualification,
     warnings,
     consensus: {
       home: p.home,
@@ -419,7 +440,7 @@ export function analyzeActiveAuthoritatively(
     risk,
     aiReasoningPacket: {
       ...base.aiReasoningPacket,
-      analysisVersion: "gfi-authoritative-v8",
+      analysisVersion: "gfi-authoritative-v9",
       aiRole: "SINGLE_AUTHORITATIVE_EVIDENCE_WEIGHTED_ENGINE",
       confidenceDefinition:
         "Epistemic confidence is evidence/coverage/consensus quality; it is never equal to event probability.",
@@ -437,6 +458,10 @@ export function analyzeActiveAuthoritatively(
       sparsePriorUsed: teamSample === 0,
       activeEngineFamilies: ACTIVE_ENGINE_FAMILIES,
       simulationIsIndependent: false,
+      marketCandidates: marketCandidateResults.candidates,
+      valueAnalysis: marketCandidateResults.valueAnalysis,
+      contradictionAnalysis: marketCandidateResults.contradiction,
+      qualification: marketCandidateResults.qualification,
     },
   };
 }

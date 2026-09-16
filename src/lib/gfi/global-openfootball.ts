@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { createServerFn } from "@tanstack/react-start";
 import type { MatchRow } from "./intelligence";
 import { canonicalCompetitionName, canonicalTeamName } from "./identity";

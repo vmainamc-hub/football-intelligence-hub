@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { MatchRow } from "./intelligence";
 import type { AuthoritativeMatchAnalysis } from "./authoritative";
 import { sameTeamIdentity } from "./identity";
