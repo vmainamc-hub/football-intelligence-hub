@@ -1,5 +1,5 @@
 import type { MatchRow, FreeLeague } from "./intelligence";
-import { analyzeActiveAuthoritatively } from "./authoritative-runtime";
+import { analyzeAdaptiveAuthoritatively as analyzeActiveAuthoritatively } from "./adaptive-authoritative-runtime";
 import type { AuthoritativeMatchAnalysis } from "./authoritative";
 import { simulationEngineOutput } from "./simulation-engine";
 import { canonicalCompetitionName, sameTeamIdentity } from "./identity";
@@ -20,185 +20,40 @@ export type AnalysisPipelineTrace = {
   enginesRun: string[];
   evidenceMode: "TARGET_COMPETITION" | "GLOBAL_CONTEXT" | "LIMITED";
   modelContext: "TARGET_COMPETITION_PLUS_TEAM_CONTEXT" | "TEAM_CONTEXT" | "LIMITED";
-  simulation: {
-    iterations: number;
-    homeWin: number;
-    draw: number;
-    awayWin: number;
-    agreement: number;
-  };
+  simulation: { iterations: number; homeWin: number; draw: number; awayWin: number; agreement: number };
   generatedAt: string;
 };
-
 export type ServerMatchAnalysis = AuthoritativeMatchAnalysis & { pipeline: AnalysisPipelineTrace };
+const normalizeName = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\bfootball club\b/g, "").replace(/\b(afc|fc|cf|sc)\b/g, "").replace(/[^a-z0-9]/g, "");
+const sameTeam = (a: string, b: string) => sameTeamIdentity(a, b) || normalizeName(a) === normalizeName(b);
+const dateKey = (v: string) => { const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/); if (!m) return v; const y = m[3].length === 2 ? Number(m[3]) + 2000 : Number(m[3]); return `${y.toString().padStart(4, "0")}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`; };
+const prepare = (f: MatchRow, r: MatchRow[]) => r.filter((x) => x.hg !== undefined && x.ag !== undefined && dateKey(x.date) < dateKey(f.date)).map((x) => ({ ...x, home: sameTeam(x.home, f.home) ? f.home : sameTeam(x.home, f.away) ? f.away : x.home, away: sameTeam(x.away, f.home) ? f.home : sameTeam(x.away, f.away) ? f.away : x.away })).sort((a, b) => `${dateKey(a.date)} ${a.time ?? ""}`.localeCompare(`${dateKey(b.date)} ${b.time ?? ""}`));
+const dedupe = (r: MatchRow[]) => { const s = new Set<string>(); return r.filter((x) => { const id = `${dateKey(x.date)}|${normalizeName(x.home)}|${normalizeName(x.away)}|${x.hg ?? ""}|${x.ag ?? ""}`; if (s.has(id)) return false; s.add(id); return true; }); };
+const buildModelContext = (fixture: MatchRow, target: MatchRow[], all: MatchRow[], mode: AnalysisPipelineTrace["evidenceMode"]) => { const targetSet = new Set(target.map((x) => `${dateKey(x.date)}|${normalizeName(x.home)}|${normalizeName(x.away)}|${x.hg}|${x.ag}`)); const teamContext = all.filter((x) => sameTeam(x.home, fixture.home) || sameTeam(x.away, fixture.home) || sameTeam(x.home, fixture.away) || sameTeam(x.away, fixture.away)); if (mode === "TARGET_COMPETITION") return dedupe([...target, ...teamContext.filter((x) => !targetSet.has(`${dateKey(x.date)}|${normalizeName(x.home)}|${normalizeName(x.away)}|${x.hg}|${x.ag}`))]).slice(-900); if (mode === "GLOBAL_CONTEXT") return dedupe(teamContext).slice(-360); return dedupe(teamContext).slice(-120); };
 
-const normalizeName = (v: string) =>
-  v
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\bfootball club\b/g, "")
-    .replace(/\b(afc|fc|cf|sc)\b/g, "")
-    .replace(/[^a-z0-9]/g, "");
-const sameTeam = (a: string, b: string) =>
-  sameTeamIdentity(a, b) || normalizeName(a) === normalizeName(b);
-const dateKey = (v: string) => {
-  const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  if (!m) return v;
-  const y = m[3].length === 2 ? Number(m[3]) + 2000 : Number(m[3]);
-  return `${y.toString().padStart(4, "0")}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-};
-
-const prepare = (f: MatchRow, r: MatchRow[]) =>
-  r
-    .filter((x) => x.hg !== undefined && x.ag !== undefined && dateKey(x.date) < dateKey(f.date))
-    .map((x) => ({
-      ...x,
-      home: sameTeam(x.home, f.home) ? f.home : sameTeam(x.home, f.away) ? f.away : x.home,
-      away: sameTeam(x.away, f.home) ? f.home : sameTeam(x.away, f.away) ? f.away : x.away,
-    }))
-    .sort((a, b) =>
-      `${dateKey(a.date)} ${a.time ?? ""}`.localeCompare(`${dateKey(b.date)} ${b.time ?? ""}`),
-    );
-
-const dedupe = (r: MatchRow[]) => {
-  const s = new Set<string>();
-  return r.filter((x) => {
-    const id = `${dateKey(x.date)}|${normalizeName(x.home)}|${normalizeName(x.away)}|${x.hg ?? ""}|${x.ag ?? ""}`;
-    if (s.has(id)) return false;
-    s.add(id);
-    return true;
-  });
-};
-
-/**
- * The model should not consume every historical row equally. Use the target
- * competition as the primary context, then supplement it with broader history
- * involving the two teams. This prevents unrelated leagues from dominating
- * the prediction while preserving enough rows for global-model calibration.
- */
-const buildModelContext = (
-  fixture: MatchRow,
-  target: MatchRow[],
-  all: MatchRow[],
-  mode: AnalysisPipelineTrace["evidenceMode"],
-) => {
-  const targetSet = new Set(
-    target.map(
-      (x) => `${dateKey(x.date)}|${normalizeName(x.home)}|${normalizeName(x.away)}|${x.hg}|${x.ag}`,
-    ),
-  );
-  const teamContext = all.filter(
-    (x) =>
-      sameTeam(x.home, fixture.home) ||
-      sameTeam(x.away, fixture.home) ||
-      sameTeam(x.home, fixture.away) ||
-      sameTeam(x.away, fixture.away),
-  );
-
-  if (mode === "TARGET_COMPETITION") {
-    return dedupe([
-      ...target,
-      ...teamContext.filter(
-        (x) =>
-          !targetSet.has(
-            `${dateKey(x.date)}|${normalizeName(x.home)}|${normalizeName(x.away)}|${x.hg}|${x.ag}`,
-          ),
-      ),
-    ]).slice(-900);
-  }
-  if (mode === "GLOBAL_CONTEXT") return dedupe(teamContext).slice(-360);
-  return dedupe(teamContext).slice(-120);
-};
-
-export function analyzeLoadedFixture(
-  fixture: MatchRow,
-  code: string,
-  groups: FreeLeague[],
-): ServerMatchAnalysis {
+export function analyzeLoadedFixture(fixture: MatchRow, code: string, groups: FreeLeague[]): ServerMatchAnalysis {
   const targetLeague = canonicalCompetitionName(fixture.league);
-  const group =
-    groups.find((g) => g.code === code) ||
-    groups.find((g) => canonicalCompetitionName(g.league) === targetLeague) ||
-    groups.find((g) => g.league === fixture.league);
+  const group = groups.find((g) => g.code === code) || groups.find((g) => canonicalCompetitionName(g.league) === targetLeague) || groups.find((g) => g.league === fixture.league);
   const target = prepare(fixture, group?.matches ?? []);
-  const all = dedupe(
-    prepare(
-      fixture,
-      groups.flatMap((g) => g.matches),
-    ),
-  );
+  const all = dedupe(prepare(fixture, groups.flatMap((g) => g.matches)));
   const home = all.filter((x) => sameTeam(x.home, fixture.home) || sameTeam(x.away, fixture.home));
   const away = all.filter((x) => sameTeam(x.home, fixture.away) || sameTeam(x.away, fixture.away));
-  const mode: AnalysisPipelineTrace["evidenceMode"] =
-    Math.min(
-      target.filter((x) => sameTeam(x.home, fixture.home) || sameTeam(x.away, fixture.home)).length,
-      target.filter((x) => sameTeam(x.home, fixture.away) || sameTeam(x.away, fixture.away)).length,
-    ) >= 8
-      ? "TARGET_COMPETITION"
-      : Math.min(home.length, away.length) >= 4
-        ? "GLOBAL_CONTEXT"
-        : "LIMITED";
-
+  const mode: AnalysisPipelineTrace["evidenceMode"] = Math.min(target.filter((x) => sameTeam(x.home, fixture.home) || sameTeam(x.away, fixture.home)).length, target.filter((x) => sameTeam(x.home, fixture.away) || sameTeam(x.away, fixture.away)).length) >= 8 ? "TARGET_COMPETITION" : Math.min(home.length, away.length) >= 4 ? "GLOBAL_CONTEXT" : "LIMITED";
   const modelRows = buildModelContext(fixture, target, all, mode);
   const result = analyzeActiveAuthoritatively({ ...fixture }, modelRows);
   const existingSim = result.engines.find((e) => e.id === "SIMULATION");
-  const sim =
-    existingSim && result.aiReasoningPacket?.simulation
-      ? { engine: existingSim, summary: result.aiReasoningPacket.simulation }
-      : simulationEngineOutput(result, 10000);
-  const seenEngineIds = new Set<string>();
-  const engines: typeof result.engines = [];
-  for (const e of result.engines) {
-    if (!seenEngineIds.has(e.id)) {
-      seenEngineIds.add(e.id);
-      engines.push(e);
-    }
-  }
-  if (!seenEngineIds.has("SIMULATION")) {
-    engines.push(sim.engine);
-  }
+  const sim = existingSim && result.aiReasoningPacket?.simulation ? { engine: existingSim, summary: result.aiReasoningPacket.simulation } : simulationEngineOutput(result, 10000);
+  const seenEngineIds = new Set<string>(); const engines: typeof result.engines = [];
+  for (const e of result.engines) if (!seenEngineIds.has(e.id)) { seenEngineIds.add(e.id); engines.push(e); }
+  if (!seenEngineIds.has("SIMULATION")) engines.push(sim.engine);
   const generatedAt = new Date().toISOString();
-
-  return {
-    ...result,
-    engines,
-    pipeline: {
-      fixtureId: [
-        dateKey(fixture.date),
-        normalizeName(fixture.home),
-        normalizeName(fixture.away),
-        fixture.time ?? "",
-        fixture.source ?? "free",
-        fixture.sourceId ?? "",
-      ].join("|"),
-      source: fixture.source ?? "free-data",
-      competition: fixture.league ?? group?.league ?? "Worldwide Football",
-      competitionsLoaded: groups.length,
-      historicalRowsLoaded: all.length,
-      targetCompetitionRows: target.length,
-      modelContextRows: modelRows.length,
-      homeRowsMatched: home.length,
-      awayRowsMatched: away.length,
-      homeSample: result.home.played,
-      awaySample: result.away.played,
-      h2hSample: result.engines.find((e) => e.id === "H2H")?.values.matches ?? 0,
-      enginesRun: engines.map((e) => e.id),
-      evidenceMode: mode,
-      modelContext:
-        mode === "TARGET_COMPETITION"
-          ? "TARGET_COMPETITION_PLUS_TEAM_CONTEXT"
-          : mode === "GLOBAL_CONTEXT"
-            ? "TEAM_CONTEXT"
-            : "LIMITED",
-      simulation: {
-        iterations: sim.summary.iterations,
-        homeWin: sim.summary.homeWin,
-        draw: sim.summary.draw,
-        awayWin: sim.summary.awayWin,
-        agreement: sim.summary.scenarioAgreement,
-      },
-      generatedAt,
-    },
-  };
+  return { ...result, engines, pipeline: {
+    fixtureId: [dateKey(fixture.date), normalizeName(fixture.home), normalizeName(fixture.away), fixture.time ?? "", fixture.source ?? "free", fixture.sourceId ?? ""].join("|"),
+    source: fixture.source ?? "free-data", competition: fixture.league ?? group?.league ?? "Worldwide Football", competitionsLoaded: groups.length,
+    historicalRowsLoaded: all.length, targetCompetitionRows: target.length, modelContextRows: modelRows.length, homeRowsMatched: home.length, awayRowsMatched: away.length,
+    homeSample: result.home.played, awaySample: result.away.played, h2hSample: result.engines.find((e) => e.id === "H2H")?.values.matches ?? 0,
+    enginesRun: engines.map((e) => e.id), evidenceMode: mode,
+    modelContext: mode === "TARGET_COMPETITION" ? "TARGET_COMPETITION_PLUS_TEAM_CONTEXT" : mode === "GLOBAL_CONTEXT" ? "TEAM_CONTEXT" : "LIMITED",
+    simulation: { iterations: sim.summary.iterations, homeWin: sim.summary.homeWin, draw: sim.summary.draw, awayWin: sim.summary.awayWin, agreement: sim.summary.scenarioAgreement }, generatedAt,
+  } };
 }
