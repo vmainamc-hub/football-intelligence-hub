@@ -6,7 +6,7 @@ const tone = (value: string) => value === "PASS" || value === "SUPPORT" || value
 export function FootballExpertCouncil({ panel }: Props) {
   if (!panel) return null;
   const call = panel.analystCall;
-  const unavailable = panel.executionState !== "AVAILABLE";
+  const unavailable = panel.executionState ? panel.executionState !== "AVAILABLE" : panel.status !== "ACTIVE";
   return (
     <section className="mt-6 panel border-primary/40 p-6 shadow-sm">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -58,7 +58,7 @@ export function FootballExpertCouncil({ panel }: Props) {
       <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded border border-border bg-card p-3"><div className="label-xs">IDENTITY CHECK</div>{unavailable ? <div className="mt-1 font-semibold text-amber-500">NOT ASSESSED</div> : <><div className={`mt-1 font-semibold ${tone(panel.identityCheck.status)}`}>{panel.identityCheck.status}</div><div className="mt-2 text-[11px] text-muted-foreground">Home {panel.identityCheck.homeConfidence}% · Away {panel.identityCheck.awayConfidence}% · Competition {panel.identityCheck.competitionConfidence}%</div></>}</div>
         <div className="rounded border border-border bg-card p-3"><div className="label-xs">FOOTBALL REALITY</div>{unavailable ? <div className="mt-1 font-semibold text-amber-500">NOT ASSESSED</div> : <><div className={`mt-1 font-semibold ${tone(panel.realityCheck.status)}`}>{panel.realityCheck.status}</div><div className="mt-2 text-[11px] text-muted-foreground">Reality score {panel.realityCheck.score}/100</div></>}</div>
-        <div className="rounded border border-border bg-card p-3"><div className="label-xs">CHAIR DECISION</div><div className={`mt-1 font-semibold ${tone(panel.chair.decision)}`}>{unavailable ? "NOT EXECUTED" : panel.chair.decision}</div><div className="mt-2 text-[11px] text-muted-foreground">{unavailable ? "AI chair did not run" : `Severity ${panel.chair.severity}`}</div></div>
+        <div className="rounded border border-border bg-card p-3"><div className="label-xs">CHAIR DECISION</div><div className={`mt-1 font-semibold ${unavailable ? "text-amber-500" : tone(panel.chair.decision)}`}>{unavailable ? "NOT EXECUTED" : panel.chair.decision}</div><div className="mt-2 text-[11px] text-muted-foreground">{unavailable ? "AI chair did not run" : `Severity ${panel.chair.severity}`}</div></div>
         <div className="rounded border border-border bg-card p-3"><div className="label-xs">COUNCIL MARKET</div><div className="mt-1 font-semibold">{panel.marketReview.selectedMarket || "Not supplied"}</div><div className="mt-2 text-[11px] text-muted-foreground">{unavailable ? "Quantitative fallback" : "Decision-layer selection"}</div></div>
       </div>
 

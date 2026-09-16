@@ -38,6 +38,7 @@ export type CouncilDiagnosticAttempt = {
 
 export type FootballExpertPanel = {
   status: "ACTIVE" | "UNAVAILABLE" | "ERROR";
+  executionState: "AVAILABLE" | "UNAVAILABLE" | "ERROR";
   provider: "GEMINI" | "NONE";
   model: string;
   generatedAt: string;
@@ -88,6 +89,7 @@ export const emptyPanel = (
   const fallback = analysis?.qualification?.actionableMarket;
   return {
     status,
+    executionState: status === "ACTIVE" ? "AVAILABLE" : status,
     provider: "NONE",
     model,
     generatedAt: new Date().toISOString(),
@@ -168,6 +170,7 @@ export function cleanPanel(
 
   const cleaned: FootballExpertPanel = {
     status: "ACTIVE",
+    executionState: "AVAILABLE",
     provider: "GEMINI",
     model,
     generatedAt: new Date().toISOString(),
