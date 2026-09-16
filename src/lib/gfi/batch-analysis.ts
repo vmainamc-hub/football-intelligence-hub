@@ -1,7 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { loadFreeFixtures, type MatchRow, type FreeLeague } from "./intelligence";
 import { analyzeLoadedFixture, type ServerMatchAnalysis } from "./server-pipeline";
-import { bestQualifiedMarket, buildMainstreamMarketMap, type MarketSignal } from "./market-map";
+import { deriveConsensusActionability } from "./actionability";
+import type { MarketSignal } from "./market-map";
 
 export type BatchIntent = {
   raw: string;
@@ -53,12 +54,7 @@ function kickoffValue(match: MatchRow) {
 }
 
 function normalizeText(value: string) {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9.]+/g, " ")
-    .trim();
+  return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.]+/g, " ").trim();
 }
 
 function parseCount(text: string) {
@@ -81,62 +77,44 @@ function parseIntent(raw: string): BatchIntent {
           : /\bdraw\b/.test(text)
             ? "DRAW"
             : "ACTIONABLE";
-
   let market: BatchIntent["market"];
   let marketSelection: string | undefined;
   if (/\b(gg|btts yes|both teams to score)\b/.test(text)) {
-    market = "BTTS";
-    marketSelection = "BTTS — YES";
+    market = "BTTS"; marketSelection = "BTTS — YES";
   } else if (/\bbtts no\b/.test(text)) {
-    market = "BTTS";
-    marketSelection = "BTTS — NO";
+    market = "BTTS"; marketSelection = "BTTS — NO";
   } else if (/\bover\s*1\.5\b/.test(text)) {
-    market = "OVER/UNDER 1.5";
-    marketSelection = "OVER 1.5";
+    market = "OVER/UNDER 1.5"; marketSelection = "OVER 1.5";
   } else if (/\bunder\s*1\.5\b/.test(text)) {
-    market = "OVER/UNDER 1.5";
-    marketSelection = "UNDER 1.5";
+    market = "OVER/UNDER 1.5"; marketSelection = "UNDER 1.5";
   } else if (/\bover\s*2\.5\b/.test(text)) {
-    market = "OVER/UNDER 2.5";
-    marketSelection = "OVER 2.5";
+    market = "OVER/UNDER 2.5"; marketSelection = "OVER 2.5";
   } else if (/\bunder\s*2\.5\b/.test(text)) {
-    market = "OVER/UNDER 2.5";
-    marketSelection = "UNDER 2.5";
+    market = "OVER/UNDER 2.5"; marketSelection = "UNDER 2.5";
   } else if (/\bover\s*3\.5\b/.test(text)) {
-    market = "OVER/UNDER 3.5";
-    marketSelection = "OVER 3.5";
+    market = "OVER/UNDER 3.5"; marketSelection = "OVER 3.5";
   } else if (/\bunder\s*3\.5\b/.test(text)) {
-    market = "OVER/UNDER 3.5";
-    marketSelection = "UNDER 3.5";
+    market = "OVER/UNDER 3.5"; marketSelection = "UNDER 3.5";
   } else if (/\bdouble chance\b/.test(text)) {
     market = "DOUBLE CHANCE";
   } else if (/\b(draw no bet|dnb)\b/.test(text)) {
     market = "DRAW NO BET";
   }
-
-  const scope: BatchIntent["scope"] =
-    isNext || !/\b(today|todays|today's)\b/.test(text) ? "NEXT" : "TODAY";
+  const scope: BatchIntent["scope"] = isNext || !/\b(today|todays|today's)\b/.test(text) ? "NEXT" : "TODAY";
   return { raw, count, scope, mode: market ? "MARKET" : mode, market, marketSelection };
 }
 
 function fixtureId(fixture: MatchRow) {
-  return [
-    dateKey(fixture.date),
-    normalizeText(fixture.home),
-    normalizeText(fixture.away),
-    fixture.time ?? "",
-  ].join("|");
+  return [dateKey(fixture.date), normalizeText(fixture.home), normalizeText(fixture.away), fixture.time ?? ""].join("|");
 }
 
 function uniqueFixtures(groups: FreeLeague[]) {
   const unique = new Map<string, MatchRow & { league: string; code: string; season: string }>();
-  for (const group of groups) {
-    for (const fixture of group.matches) {
-      if (fixture.hg !== undefined || fixture.ag !== undefined) continue;
-      const enriched = { ...fixture, league: group.league, code: group.code, season: group.season };
-      const key = fixtureId(enriched);
-      if (!unique.has(key)) unique.set(key, enriched);
-    }
+  for (const group of groups) for (const fixture of group.matches) {
+    if (fixture.hg !== undefined || fixture.ag !== undefined) continue;
+    const enriched = { ...fixture, league: group.league, code: group.code, season: group.season };
+    const key = fixtureId(enriched);
+    if (!unique.has(key)) unique.set(key, enriched);
   }
   return [...unique.values()].sort((a, b) => kickoffValue(a).localeCompare(kickoffValue(b)));
 }
@@ -147,254 +125,102 @@ function diversifyCandidates(fixtures: ReturnType<typeof uniqueFixtures>, limit:
   for (const fixture of fixtures) {
     const key = normalizeText(fixture.league ?? "Worldwide Football") || "worldwide football";
     const bucket = buckets.get(key) ?? [];
-    bucket.push(fixture);
-    buckets.set(key, bucket);
+    bucket.push(fixture); buckets.set(key, bucket);
   }
   const ordered = [...buckets.entries()].sort(([a], [b]) => a.localeCompare(b));
   const selected: typeof fixtures = [];
   let cursor = 0;
   while (selected.length < limit && ordered.length) {
-    const [key, bucket] = ordered[cursor % ordered.length];
-    if (bucket.length) selected.push(bucket.shift()!);
-    if (!bucket.length) ordered.splice(cursor % ordered.length, 1);
-    else cursor += 1;
+    const index = cursor % ordered.length;
+    const bucket = ordered[index][1];
+    selected.push(bucket.shift()!);
+    if (!bucket.length) ordered.splice(index, 1); else cursor++;
   }
   return selected.sort((a, b) => kickoffValue(a).localeCompare(kickoffValue(b)));
 }
 
-async function mapConcurrent<T, R>(
-  items: T[],
-  workerCount: number,
-  worker: (item: T) => Promise<R | undefined>,
-) {
+async function mapConcurrent<T, R>(items: T[], workerCount: number, worker: (item: T) => Promise<R | undefined>) {
   const results: Array<R | undefined> = new Array(items.length);
   let cursor = 0;
   async function runWorker() {
     while (true) {
       const index = cursor++;
       if (index >= items.length) return;
-      try {
-        results[index] = await worker(items[index]);
-      } catch {
-        results[index] = undefined;
-      }
+      try { results[index] = await worker(items[index]); } catch { results[index] = undefined; }
     }
   }
   await Promise.all(Array.from({ length: Math.min(workerCount, items.length) }, () => runWorker()));
   return results.filter((item): item is R => item !== undefined);
 }
 
-function exactMarketSignal(
-  result: ServerMatchAnalysis,
-  market: BatchIntent["market"],
-  selection?: string,
-) {
-  if (!market) return undefined;
-  const map = buildMainstreamMarketMap(result);
-  if (market === "BTTS" && selection) {
-    const engine = result.engines.find((e) => e.id === "BTTS");
-    const yes = Number(engine?.values.yes);
-    if (!Number.isFinite(yes)) return undefined;
-    const probability = selection === "BTTS — NO" ? 1 - yes : yes;
-    return {
-      market: "BTTS",
-      selection,
-      probability,
-      confidence: Math.round((result.confidence + probability * 100) / 2),
-      tier: probability >= 0.62 ? "PRIMARY" : probability >= 0.56 ? "SECONDARY" : "WATCH",
-      rationale: `BTTS model probability for ${selection} is ${(probability * 100).toFixed(1)}%.`,
-    } satisfies MarketSignal;
+function candidateToSignal(result: ServerMatchAnalysis, intent: BatchIntent): MarketSignal | undefined {
+  const action = deriveConsensusActionability(result).actionableMarket;
+  if (!action) return undefined;
+  if (intent.mode === "HOME" || intent.mode === "AWAY" || intent.mode === "DRAW") {
+    const key = intent.mode === "HOME" ? "home" : intent.mode === "AWAY" ? "away" : "draw";
+    const p = result.probabilities[key];
+    const selection = intent.mode === "HOME" ? `${result.home.team} Win` : intent.mode === "AWAY" ? `${result.away.team} Win` : "DRAW";
+    return { market: "1X2", selection, probability: p, confidence: result.confidence, tier: p >= 0.57 ? "PRIMARY" : "SECONDARY", rationale: `Authoritative 1X2 probability for ${selection} is ${(p * 100).toFixed(1)}%.` };
   }
-  if (market.startsWith("OVER/UNDER") && selection) {
-    const line = market.replace("OVER/UNDER ", "");
-    const engine = result.engines.find((e) => e.id === "TOTALS");
-    const over = Number(engine?.values[`over${line}`]);
-    if (!Number.isFinite(over)) return undefined;
-    const probability = selection.startsWith("UNDER") ? 1 - over : over;
-    return {
-      market,
-      selection,
-      probability,
-      confidence: Math.round((result.confidence + probability * 100) / 2),
-      tier: probability >= 0.64 ? "PRIMARY" : probability >= 0.58 ? "SECONDARY" : "WATCH",
-      rationale: `Totals model probability for ${selection} is ${(probability * 100).toFixed(1)}%.`,
-    } satisfies MarketSignal;
+  if (intent.mode === "MARKET" && intent.market) {
+    const wanted = (result.marketCandidates ?? []).filter(c => c.market === intent.market && (!intent.marketSelection || c.selection === intent.marketSelection));
+    const exact = wanted.sort((a, b) => b.modelProbability - a.modelProbability)[0];
+    if (!exact) return undefined;
+    return { market: exact.market, selection: exact.selection, probability: exact.modelProbability, confidence: result.confidence, tier: exact.modelProbability >= 0.62 ? "PRIMARY" : "SECONDARY", rationale: `Authoritative model probability for ${exact.selection} is ${(exact.modelProbability * 100).toFixed(1)}%.` };
   }
-  return map
-    .filter((item) => item.market === market)
-    .sort((a, b) => b.probability - a.probability)[0];
+  return { market: action.market, selection: action.selection, probability: action.modelProbability, confidence: result.confidence, tier: "PRIMARY", rationale: action.whyConsidered ?? "Selected by the authoritative cross-engine actionability layer." };
 }
 
-function directOutcomeSignal(
-  result: ServerMatchAnalysis,
-  outcome: "HOME" | "AWAY" | "DRAW",
-): MarketSignal {
-  const probs = result?.probabilities ?? { home: 0.33, draw: 0.34, away: 0.33 };
-  const p = probs[outcome === "HOME" ? "home" : outcome === "AWAY" ? "away" : "draw"] ?? 0.33;
-  const label =
-    outcome === "HOME"
-      ? `${result?.home?.team ?? "Home"} WIN`
-      : outcome === "AWAY"
-        ? `${result?.away?.team ?? "Away"} WIN`
-        : "DRAW";
-  return {
-    market: "1X2",
-    selection: label,
-    probability: p,
-    confidence: result?.confidence ?? 50,
-    tier: p >= 0.57 ? "PRIMARY" : p >= 0.5 ? "SECONDARY" : "WATCH",
-    rationale: `Authoritative 1X2 probability for ${label} is ${(p * 100).toFixed(1)}%.`,
-  };
-}
-
-function qualifyMarket(result: ServerMatchAnalysis, signal: MarketSignal) {
-  const probabilityFloor =
-    signal.market === "OVER/UNDER 1.5"
-      ? 0.64
-      : signal.market === "DOUBLE CHANCE"
-        ? 0.62
-        : signal.market === "DRAW NO BET"
-          ? 0.6
-          : signal.market === "BTTS"
-            ? 0.62
-            : 0.57;
-  const riskBlocked = result.risk === "VERY HIGH" || result.risk === "HIGH";
-  const strongEvidence = result.quality >= 40 && result.robustness.score >= 45;
-  const qualified = signal.probability >= probabilityFloor && strongEvidence && !riskBlocked;
-  const watch =
-    signal.probability >= Math.max(0.5, probabilityFloor - 0.06) &&
-    result.quality >= 32 &&
-    result.robustness.score >= 32;
-  return {
-    qualified,
-    watch,
-    reason: qualified
-      ? `${signal.selection} clears the batch qualification floor with ${(signal.probability * 100).toFixed(1)}% probability, ${result.confidence}% confidence and ${result.robustness.score}% robustness.`
-      : watch
-        ? `${signal.selection} is a watch candidate but does not clear the full probability/evidence/risk gate.`
-        : `${signal.selection} did not clear the probability, evidence or risk gates.`,
-  };
-}
-
-function selectionScore(
-  result: ServerMatchAnalysis,
-  signal: MarketSignal,
-  mode: BatchIntent["mode"],
-) {
-  const base =
-    signal.probability * 0.48 +
-    (result.confidence / 100) * 0.18 +
-    (result.robustness.score / 100) * 0.16 +
-    (result.quality / 100) * 0.12 +
-    result.consensus.agreement * 0.06;
+function selectionScore(result: ServerMatchAnalysis, signal: MarketSignal, mode: BatchIntent["mode"]) {
+  const base = signal.probability * 0.48 + (result.confidence / 100) * 0.18 + (result.robustness.score / 100) * 0.16 + (result.quality / 100) * 0.12 + result.consensus.agreement * 0.06;
   const conflictPenalty = result.consensus.conflict * 0.18;
-  const modeBonus =
-    mode === "SAFEST" && result.risk === "LOW"
-      ? 0.06
-      : mode === "SAFEST" && result.risk === "MODERATE"
-        ? 0.02
-        : mode === "SLIP"
-          ? 0.02
-          : 0;
+  const modeBonus = mode === "SAFEST" && result.risk === "LOW" ? 0.06 : mode === "SAFEST" && result.risk === "MODERATE" ? 0.02 : mode === "SLIP" ? 0.02 : 0;
   return base + modeBonus - conflictPenalty;
-}
-
-function chooseMarket(result: ServerMatchAnalysis, intent: BatchIntent) {
-  if (intent.mode === "MARKET")
-    return exactMarketSignal(result, intent.market, intent.marketSelection);
-  if (intent.mode === "HOME") return directOutcomeSignal(result, "HOME");
-  if (intent.mode === "AWAY") return directOutcomeSignal(result, "AWAY");
-  if (intent.mode === "DRAW") return directOutcomeSignal(result, "DRAW");
-  return bestQualifiedMarket(result);
 }
 
 function targetCandidates(fixtures: ReturnType<typeof uniqueFixtures>, intent: BatchIntent) {
   const today = todayEAT();
-  return fixtures.filter((fixture) => {
-    const d = dateKey(fixture.date);
-    return intent.scope === "TODAY" ? d === today : d >= today;
-  });
+  return fixtures.filter(fixture => intent.scope === "TODAY" ? dateKey(fixture.date) === today : dateKey(fixture.date) >= today);
 }
 
-export type BatchAnalysisInput = {
-  request?: string;
-  limit?: number;
-  includeUpcoming?: boolean;
-};
+export type BatchAnalysisInput = { request?: string; limit?: number; includeUpcoming?: boolean };
 
-export async function runBatchAnalysisInternal(
-  data: BatchAnalysisInput,
-): Promise<BatchAnalysisResponse> {
-  const request = (
-    data.request ??
-    (data.limit ? `Give me ${data.limit} safest picks` : "Predict today's next matches")
-  ).trim();
+export async function runBatchAnalysisInternal(data: BatchAnalysisInput): Promise<BatchAnalysisResponse> {
+  const request = (data.request ?? (data.limit ? `Give me ${data.limit} safest picks` : "Predict today's next matches")).trim();
   const intent = parseIntent(request);
   const groups = await loadFreeFixtures();
   const allCandidates = targetCandidates(uniqueFixtures(groups), intent);
   const analysisBudget = Math.min(360, Math.max(160, intent.count * 12));
   const pool = diversifyCandidates(allCandidates, analysisBudget);
 
-  const analysed = await mapConcurrent(pool, 8, async (fixture) => {
+  const analysed = await mapConcurrent(pool, 8, async fixture => {
     const analysis = analyzeLoadedFixture(fixture, fixture.code, groups);
-    const signal = chooseMarket(analysis, intent);
-    if (!signal) return undefined;
-    const gate = qualifyMarket(analysis, signal);
-    const status: BatchSelection["status"] = gate.qualified
-      ? "QUALIFIED"
-      : gate.watch
-        ? "WATCH"
-        : "NO QUALIFIED MARKET";
-    return {
-      fixture,
-      analysis,
-      market: signal,
-      score: selectionScore(analysis, signal, intent.mode),
-      status,
-      reason: gate.reason,
-    } satisfies BatchSelection;
+    const signal = candidateToSignal(analysis, intent);
+    if (!signal || !Number.isFinite(signal.probability)) return undefined;
+    const status: BatchSelection["status"] = "QUALIFIED";
+    const evidence = analysis.pipeline.evidenceMode;
+    const reason = `Actionable prediction selected by the authoritative cross-engine model. Probability ${(signal.probability * 100).toFixed(1)}%; confidence ${analysis.confidence}%; risk ${analysis.risk}; evidence mode ${evidence}. Batch ranking does not require the single-match hard qualification gate to exist.`;
+    return { fixture, analysis, market: signal, score: selectionScore(analysis, signal, intent.mode), status, reason } satisfies BatchSelection;
   });
 
-  const qualified = analysed
-    .filter((row) => row.status === "QUALIFIED")
-    .sort((a, b) => b.score - a.score);
+  const ranked = analysed.sort((a, b) => b.score - a.score);
   const selected: BatchSelection[] = [];
   const usedFixtures = new Set<string>();
-  for (const row of qualified) {
+  for (const row of ranked) {
     const id = fixtureId(row.fixture);
     if (usedFixtures.has(id)) continue;
-    usedFixtures.add(id);
-    selected.push(row);
+    usedFixtures.add(id); selected.push(row);
     if (selected.length >= intent.count) break;
   }
-
   const generatedAt = new Date().toISOString();
-  const message =
-    selected.length >= intent.count
-      ? `${selected.length} qualified selections returned after scanning a diversified ${analysed.length}-match analysis set.`
-      : `${intent.count} requested. ${selected.length} currently meet the qualification criteria after analysing ${analysed.length} of ${allCandidates.length} available candidates.`;
-
-  return {
-    request,
-    intent,
-    requested: intent.count,
-    candidatePool: allCandidates.length,
-    analysisBudget: pool.length,
-    analysed: analysed.length,
-    qualified: qualified.length,
-    returned: selected.length,
-    selections: selected,
-    generatedAt,
-    message,
-  };
+  const message = selected.length >= intent.count
+    ? `${selected.length} unique actionable predictions returned from a diversified ${analysed.length}-match authoritative analysis set.`
+    : `${intent.count} requested. ${selected.length} actionable predictions were available from ${analysed.length} analysed candidates.`;
+  return { request, intent, requested: intent.count, candidatePool: allCandidates.length, analysisBudget: pool.length, analysed: analysed.length, qualified: ranked.length, returned: selected.length, selections: selected, generatedAt, message };
 }
 
 export const runBatchAnalysis = createServerFn({ method: "POST" })
-  .inputValidator(
-    (input: unknown) => input as BatchAnalysisInput,
-  )
-  .handler(async ({ data }): Promise<BatchAnalysisResponse> => {
-    return runBatchAnalysisInternal(data);
-  });
+  .inputValidator((input: unknown) => input as BatchAnalysisInput)
+  .handler(async ({ data }): Promise<BatchAnalysisResponse> => runBatchAnalysisInternal(data));
 
 export { parseIntent };
