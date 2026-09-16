@@ -5,6 +5,7 @@ type RegimeStatus = "ACCELERATING" | "SHIFTING" | "STABLE" | "UNSTABLE";
 
 export type AdaptiveSnapshot = TeamSnapshot & {
   adaptive?: {
+    rawSample: number;
     halfLifeDays: number;
     effectiveSample: number;
     recencyWeightPct: number;
@@ -22,7 +23,7 @@ export type AdaptiveSnapshot = TeamSnapshot & {
 };
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
-const avg = (xs: number[]) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
 function dateKey(value: string): string {
   const iso = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
@@ -42,10 +43,19 @@ function seasonStart(key: string) {
   return month >= 7 ? y : y - 1;
 }
 
-function completedMatches(team: string, matches: MatchRow[], asOf: string) {
+function completedMatches(team: string, matches: MatchRow[], asOf: string, opponent?: string) {
+  const targetKey = dateKey(asOf);
   return matches
-    .filter((m) => m.hg !== undefined && m.ag !== undefined)
-    .filter((m) => dateKey(m.date) <= asOf)
+    .filter((m) => m.hg !== undefined && m.ag !== undefined && !Number.isNaN(Number(m.hg)) && !Number.isNaN(Number(m.ag)))
+    .filter((m) => {
+      const k = dateKey(m.date);
+      if (k > targetKey) return false;
+      // If exact same date and opponent, exclude target fixture itself
+      if (k === targetKey && opponent && (sameTeamIdentity(m.home, opponent) || sameTeamIdentity(m.away, opponent))) {
+        return false;
+      }
+      return true;
+    })
     .filter((m) => sameTeamIdentity(m.home, team) || sameTeamIdentity(m.away, team))
     .sort((a, b) => dateKey(a.date).localeCompare(dateKey(b.date)));
 }
@@ -68,7 +78,9 @@ function buildOpponentStrengths(matches: MatchRow[], asOf: string) {
 }
 
 function matchTimeWeight(m: MatchRow, asOf: string, halfLifeDays: number) {
-  const age = Math.max(0, (Date.parse(`${asOf}T12:00:00Z`) - Date.parse(`${dateKey(m.date)}T12:00:00Z`)) / 86400000);
+  const targetTime = Date.parse(`${asOf.includes("T") ? asOf : `${asOf}T12:00:00Z`}`);
+  const matchTime = Date.parse(`${dateKey(m.date)}T12:00:00Z`);
+  const age = Math.max(0, (targetTime - matchTime) / 86400000);
   return Math.pow(0.5, age / Math.max(1, halfLifeDays));
 }
 
@@ -76,13 +88,43 @@ export function buildAdaptiveSnapshot(
   team: string,
   matches: MatchRow[],
   venue: "home" | "away",
-  asOf = matches.reduce((latest, m) => dateKey(m.date) > latest ? dateKey(m.date) : latest, "0000-00-00"),
+  asOf = matches.reduce((latest, m) => (dateKey(m.date) > latest ? dateKey(m.date) : latest), "0000-00-00"),
+  opponent?: string,
 ): AdaptiveSnapshot {
-  const rows = completedMatches(team, matches, asOf);
+  const rows = completedMatches(team, matches, asOf, opponent);
   const strengths = buildOpponentStrengths(matches, asOf);
-  const recent = rows.slice(-5);
-  const long = rows.slice(-12);
-  const baseHalfLife = rows.length < 6 ? 100 : 90;
+  const baseHalfLife = rows.length < 6 ? 95 : 90;
+
+  if (rows.length === 0) {
+    return {
+      team,
+      played: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      goalsFor: 0,
+      goalsAgainst: 0,
+      points: 0,
+      homeOrAwayRate: 0.45,
+      recent: [],
+      adaptive: {
+        rawSample: 0,
+        halfLifeDays: baseHalfLife,
+        effectiveSample: 0,
+        recencyWeightPct: 0,
+        currentSeasonSharePct: 0,
+        venueSharePct: 0,
+        opponentStrength: 1,
+        regimeStatus: "STABLE",
+        regimeShiftScore: 0,
+        currentFormPPG: 1.35,
+        historicalFormPPG: 1.35,
+        currentGoalDiff: 0,
+        historicalGoalDiff: 0,
+        shrinkagePct: 100,
+      },
+    };
+  }
 
   const raw = (m: MatchRow) => {
     const isHome = sameTeamIdentity(m.home, team);
@@ -91,8 +133,8 @@ export function buildAdaptiveSnapshot(
     const result = gf > ga ? "W" : gf === ga ? "D" : "L";
     const opp = isHome ? m.away : m.home;
     const oppRec = strengths.totals.get(opp);
-    const oppPPG = oppRec ? oppRec.points / Math.max(1, oppRec.played) : strengths.leaguePPG;
-    const strengthFactor = clamp(0.85 + 0.30 * (oppPPG / Math.max(0.8, strengths.leaguePPG)), 0.8, 1.2);
+    const oppPPG = oppRec && oppRec.played >= 2 ? oppRec.points / oppRec.played : strengths.leaguePPG;
+    const strengthFactor = clamp(0.80 + 0.35 * (oppPPG / Math.max(0.8, strengths.leaguePPG)), 0.75, 1.25);
     return { m, gf, ga, result, strengthFactor, isVenueMatch: venue === "home" ? isHome : !isHome };
   };
 
@@ -107,51 +149,72 @@ export function buildAdaptiveSnapshot(
     }
     return { ppg: pts / xs.length, gd: gd / xs.length };
   };
-  const recentStats = provisionalStats(provisional.slice(-5));
-  const longStats = provisionalStats(provisional.slice(-12));
+
+  const recentWindow = provisional.slice(-5);
+  const longWindow = provisional.slice(-12);
+  const recentStats = provisionalStats(recentWindow);
+  const longStats = provisionalStats(longWindow);
+
+  const ppgDiff = recentStats.ppg - longStats.ppg;
+  const gdDiff = recentStats.gd - longStats.gd;
   const regimeShiftScore = clamp(
-    Math.abs(recentStats.ppg - longStats.ppg) / 1.6 + Math.abs(recentStats.gd - longStats.gd) / 2.5,
+    Math.abs(ppgDiff) / 1.5 + Math.abs(gdDiff) / 2.2,
     0,
     1,
   );
-  const halfLifeDays = rows.length < 6 ? baseHalfLife : regimeShiftScore >= 0.65 ? 45 : regimeShiftScore >= 0.35 ? 70 : 120;
+
+  // Dynamic continuous half-life adaptation: stable teams retain ~125-130d memory; rapidly shifting/unstable teams shorten to ~40-45d.
+  const halfLifeDays = rows.length < 5
+    ? baseHalfLife
+    : Math.round(clamp(130 - regimeShiftScore * 88, 42, 130));
 
   const observations = provisional.map((x) => {
     const recency = matchTimeWeight(x.m, asOf, halfLifeDays);
-    const seasonBonus = seasonStart(dateKey(x.m.date)) === seasonStart(asOf) ? 1.18 : 1;
-    const venueBonus = x.isVenueMatch ? 1.15 : 1;
+    const seasonBonus = seasonStart(dateKey(x.m.date)) === seasonStart(asOf) ? 1.20 : 0.85;
+    const venueBonus = x.isVenueMatch ? 1.18 : 0.88;
     return { ...x, recency, weight: recency * seasonBonus * venueBonus * x.strengthFactor };
   });
 
   const stat = (xs: typeof observations) => {
-    const w = xs.reduce((s, x) => s + x.weight, 0) || 1;
-    const points = xs.reduce((s, x) => s + (x.result === "W" ? 3 : x.result === "D" ? 1 : 0) * x.weight, 0) / w;
-    const gf = xs.reduce((s, x) => s + x.gf * x.weight, 0) / w;
-    const ga = xs.reduce((s, x) => s + x.ga * x.weight, 0) / w;
+    const wSum = xs.reduce((s, x) => s + x.weight, 0) || 1;
+    const points = xs.reduce((s, x) => s + (x.result === "W" ? 3 : x.result === "D" ? 1 : 0) * x.weight, 0) / wSum;
+    const gf = xs.reduce((s, x) => s + x.gf * x.weight, 0) / wSum;
+    const ga = xs.reduce((s, x) => s + x.ga * x.weight, 0) / wSum;
     return { ppg: points, gf, ga, gd: gf - ga };
   };
+
   const current = stat(observations.slice(-5));
   const historical = stat(observations.slice(-12));
-  const regimeStatus: RegimeStatus = regimeShiftScore >= 0.7
-    ? "UNSTABLE"
-    : current.ppg > historical.ppg + 0.28 && current.gd > historical.gd + 0.3
-      ? "ACCELERATING"
-      : regimeShiftScore >= 0.35 ? "SHIFTING" : "STABLE";
 
-  const w = observations.reduce((s, x) => s + x.weight, 0);
+  const regimeStatus: RegimeStatus =
+    rows.length < 5
+      ? "STABLE"
+      : regimeShiftScore >= 0.55 && current.ppg < historical.ppg - 0.28
+        ? "UNSTABLE"
+        : current.ppg > historical.ppg + 0.28 && current.gd > historical.gd + 0.32
+          ? "ACCELERATING"
+          : regimeShiftScore >= 0.30
+            ? "SHIFTING"
+            : "STABLE";
+
+  const sumW = observations.reduce((s, x) => s + x.weight, 0);
+  const sumW2 = observations.reduce((s, x) => s + x.weight * x.weight, 0);
+  // Kish's formula for effective sample size of weighted observations
+  const effectiveSample = sumW2 > 0 ? clamp((sumW * sumW) / sumW2, 0.5, rows.length) : Math.min(rows.length, sumW);
+
   const wins = observations.reduce((s, x) => s + (x.result === "W" ? x.weight : 0), 0);
   const draws = observations.reduce((s, x) => s + (x.result === "D" ? x.weight : 0), 0);
   const losses = observations.reduce((s, x) => s + (x.result === "L" ? x.weight : 0), 0);
-  const gfObserved = observations.reduce((s, x) => s + x.gf * x.weight, 0) / Math.max(1, w);
-  const gaObserved = observations.reduce((s, x) => s + x.ga * x.weight, 0) / Math.max(1, w);
-  const observedPPG = (wins * 3 + draws) / Math.max(1, w);
+  const gfObserved = observations.reduce((s, x) => s + x.gf * x.weight, 0) / Math.max(0.001, sumW);
+  const gaObserved = observations.reduce((s, x) => s + x.ga * x.weight, 0) / Math.max(0.001, sumW);
+  const observedPPG = (wins * 3 + draws) / Math.max(0.001, sumW);
   const venueRows = observations.filter((x) => x.isVenueMatch);
   const venueW = venueRows.reduce((s, x) => s + x.weight, 0);
   const venueWins = venueRows.reduce((s, x) => s + (x.result === "W" ? x.weight : 0), 0);
   const observedVenueRate = venueW ? venueWins / venueW : 0.45;
 
   // Bayesian-style shrinkage prevents tiny samples from swinging the model too far.
-  const reliability = w / (w + 6);
+  const reliability = sumW / (sumW + 6);
   const shrink = 1 - reliability;
   const ppg = reliability * observedPPG + shrink * 1.35;
   const finalGF = reliability * gfObserved + shrink * 1.35;
@@ -164,31 +227,32 @@ export function buildAdaptiveSnapshot(
     const ga = isHome ? m.ag! : m.hg!;
     return gf > ga ? "W" : gf === ga ? "D" : "L";
   });
-  const avgRecency = w ? observations.reduce((s, x) => s + x.recency * x.weight, 0) / w : 0;
+  const avgRecency = sumW ? observations.reduce((s, x) => s + x.recency * x.weight, 0) / sumW : 0;
   const currentSeasonWeight = observations
     .filter((x) => seasonStart(dateKey(x.m.date)) === seasonStart(asOf))
     .reduce((s, x) => s + x.weight, 0);
-  const opponentStrength = w
-    ? observations.reduce((s, x) => s + x.strengthFactor * x.weight, 0) / w
+  const opponentStrength = sumW
+    ? observations.reduce((s, x) => s + x.strengthFactor * x.weight, 0) / sumW
     : 1;
 
   return {
     team,
-    played: Math.max(1, Math.min(24, Number(w.toFixed(2)))),
+    played: rows.length,
     wins,
     draws,
     losses,
-    goalsFor: finalGF * Math.max(1, w),
-    goalsAgainst: finalGA * Math.max(1, w),
-    points: ppg * Math.max(1, w),
+    goalsFor: finalGF * Math.max(1, rows.length),
+    goalsAgainst: finalGA * Math.max(1, rows.length),
+    points: ppg * Math.max(1, rows.length),
     homeOrAwayRate: clamp(venueRate, 0.08, 0.82),
     recent: recentResults,
     adaptive: {
+      rawSample: rows.length,
       halfLifeDays,
-      effectiveSample: Number(w.toFixed(2)),
+      effectiveSample: Number(effectiveSample.toFixed(2)),
       recencyWeightPct: Math.round(avgRecency * 100),
-      currentSeasonSharePct: Math.round((currentSeasonWeight / Math.max(1, w)) * 100),
-      venueSharePct: Math.round((venueW / Math.max(1, w)) * 100),
+      currentSeasonSharePct: Math.round((currentSeasonWeight / Math.max(0.001, sumW)) * 100),
+      venueSharePct: Math.round((venueW / Math.max(0.001, sumW)) * 100),
       opponentStrength: Number(opponentStrength.toFixed(2)),
       regimeStatus,
       regimeShiftScore: Number(regimeShiftScore.toFixed(3)),

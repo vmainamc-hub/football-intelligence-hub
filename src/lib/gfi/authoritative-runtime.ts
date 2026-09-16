@@ -3,6 +3,8 @@ import type { EngineOutput, AuthoritativeMatchAnalysis } from "./authoritative";
 import { analyzeAuthoritatively, buildAuthoritativeMarketCandidates } from "./authoritative";
 import { runAdvancedEngines } from "./advanced-engines";
 import { simulationEngineOutput } from "./simulation-engine";
+import { buildAdaptiveSnapshot } from "./adaptive-regime";
+import { deriveConsensusActionability } from "./actionability";
 
 export const ACTIVE_ENGINE_FAMILIES = [
   "FORM",
@@ -45,7 +47,15 @@ const oneX2 = (lh: number, la: number) => {
 };
 
 function consensus(core: EngineOutput[], advanced: EngineOutput[]): EngineOutput {
-  const u = [...core, ...advanced].filter((e) => e.probabilities);
+  const u = [...core, ...advanced].filter(
+    (e) =>
+      e.probabilities &&
+      e.id !== "CONSENSUS" &&
+      e.id !== "SIMULATION" &&
+      e.id !== "DATA_QUALITY" &&
+      e.id !== "MARKET" &&
+      e.id !== "MOMENTUM",
+  );
   const weight = (e: EngineOutput) => clamp(e.quality / 100, 0.15, 1.25);
   const total = u.reduce((s, e) => s + weight(e), 0) || 1;
   const H = u.reduce((s, e) => s + e.probabilities!.home * weight(e), 0) / total;
@@ -70,12 +80,12 @@ function consensus(core: EngineOutput[], advanced: EngineOutput[]): EngineOutput
     probabilities: { home: H, draw: D, away: A },
     values: { agreement: 1 - dis, conflict: dis, models: u.length, independentModels: u.length },
     evidence: [
-      `${u.length} probability-producing model families contributed.`,
+      `${u.length} independent probability-producing model families contributed.`,
       `Weights are based on evidence-adjusted model quality; outcome probability is not used as confidence.`,
       `Cross-model probability dispersion: ${(dis * 100).toFixed(1)}%.`,
     ],
     limitations:
-      u.length < 5 ? ["Fewer than five probability-producing engines are available."] : [],
+      u.length < 5 ? ["Fewer than five independent probability-producing engines are available."] : [],
   };
 }
 
@@ -260,8 +270,129 @@ export function analyzeActiveAuthoritatively(
       "Derived from the consensus goal/scoring assumptions; not counted as an independent vote.",
     ],
   };
-  const engines = [...initial, simEngine];
-  const p = con.probabilities!;
+
+  const asOf = f.date ? f.date : rows.reduce((latest, m) => (m.date > latest ? m.date : latest), "0000-00-00");
+  const homeAdaptive = buildAdaptiveSnapshot(f.home, rows, "home", asOf, f.away);
+  const awayAdaptive = buildAdaptiveSnapshot(f.away, rows, "away", asOf, f.home);
+
+  const homeLambda = clamp(
+    (homeAdaptive.goalsFor / Math.max(1, homeAdaptive.played)) * 0.62 +
+      (awayAdaptive.goalsAgainst / Math.max(1, awayAdaptive.played)) * 0.38,
+    0.35,
+    3.6,
+  );
+  const awayLambda = clamp(
+    (awayAdaptive.goalsFor / Math.max(1, awayAdaptive.played)) * 0.62 +
+      (homeAdaptive.goalsAgainst / Math.max(1, homeAdaptive.played)) * 0.38,
+    0.30,
+    3.4,
+  );
+  const adaptiveProb = oneX2(homeLambda, awayLambda);
+
+  const maxShift = Math.max(homeAdaptive.adaptive?.regimeShiftScore ?? 0, awayAdaptive.adaptive?.regimeShiftScore ?? 0);
+  const regimeWeight = clamp(0.48 + maxShift * 0.18, 0.45, 0.66);
+
+  const conP = con.probabilities!;
+  const p = {
+    home: conP.home * (1 - regimeWeight) + adaptiveProb.home * regimeWeight,
+    draw: conP.draw * (1 - regimeWeight) + adaptiveProb.draw * regimeWeight,
+    away: conP.away * (1 - regimeWeight) + adaptiveProb.away * regimeWeight,
+  };
+  const zP = p.home + p.draw + p.away || 1;
+  p.home /= zP;
+  p.draw /= zP;
+  p.away /= zP;
+
+  const totalMean = clamp(homeLambda + awayLambda, 1.2, 5.5);
+  const over = (line: number) => {
+    let sum = 0;
+    for (let k = 0; k <= Math.floor(line); k++) sum += poisson(totalMean, k);
+    return clamp(1 - sum);
+  };
+  const bttsYes = clamp((1 - Math.exp(-homeLambda)) * (1 - Math.exp(-awayLambda)));
+
+  const adaptiveEngine: EngineOutput = {
+    id: "MOMENTUM",
+    name: "Adaptive Recency + Regime (ARRM)",
+    version: "arrm-v1",
+    signal: maxShift >= 0.32 ? "SUPPORT" : "NEUTRAL",
+    confidence: Math.round(clamp(0.40 + Math.abs(p.home - p.away) * 0.65 + teamSample / 120) * 100),
+    quality: Math.round(clamp(0.45 + Math.min(1, teamSample / 24) * 0.40) * 100),
+    probabilities: p,
+    values: {
+      lambdaHome: homeLambda,
+      lambdaAway: awayLambda,
+      expectedGoals: totalMean,
+      homePPG: homeAdaptive.points / Math.max(1, homeAdaptive.played),
+      awayPPG: awayAdaptive.points / Math.max(1, awayAdaptive.played),
+      homeRawSample: homeAdaptive.adaptive?.rawSample ?? homeAdaptive.played,
+      awayRawSample: awayAdaptive.adaptive?.rawSample ?? awayAdaptive.played,
+      homeEffectiveSample: homeAdaptive.adaptive?.effectiveSample ?? homeAdaptive.played,
+      awayEffectiveSample: awayAdaptive.adaptive?.effectiveSample ?? awayAdaptive.played,
+      homeRegimeShift: homeAdaptive.adaptive?.regimeShiftScore ?? 0,
+      awayRegimeShift: awayAdaptive.adaptive?.regimeShiftScore ?? 0,
+      homeRegimeStatus: homeAdaptive.adaptive?.regimeStatus ?? "STABLE",
+      awayRegimeStatus: awayAdaptive.adaptive?.regimeStatus ?? "STABLE",
+      homeHalfLifeDays: homeAdaptive.adaptive?.halfLifeDays ?? 120,
+      awayHalfLifeDays: awayAdaptive.adaptive?.halfLifeDays ?? 120,
+      homeOpponentStrength: homeAdaptive.adaptive?.opponentStrength ?? 1,
+      awayOpponentStrength: awayAdaptive.adaptive?.opponentStrength ?? 1,
+      homeShrinkagePct: homeAdaptive.adaptive?.shrinkagePct ?? 0,
+      awayShrinkagePct: awayAdaptive.adaptive?.shrinkagePct ?? 0,
+      homeRecencyWeightPct: homeAdaptive.adaptive?.recencyWeightPct ?? 0,
+      awayRecencyWeightPct: awayAdaptive.adaptive?.recencyWeightPct ?? 0,
+      homeCurrentSeasonSharePct: homeAdaptive.adaptive?.currentSeasonSharePct ?? 0,
+      awayCurrentSeasonSharePct: awayAdaptive.adaptive?.currentSeasonSharePct ?? 0,
+      homeVenueSharePct: homeAdaptive.adaptive?.venueSharePct ?? 0,
+      awayVenueSharePct: awayAdaptive.adaptive?.venueSharePct ?? 0,
+    },
+    evidence: [
+      `${f.home}: adaptive ${homeAdaptive.adaptive?.regimeStatus ?? "STABLE"}, half-life ${homeAdaptive.adaptive?.halfLifeDays ?? 120}d, raw sample ${homeAdaptive.adaptive?.rawSample ?? homeAdaptive.played}, effective sample ${homeAdaptive.adaptive?.effectiveSample ?? homeAdaptive.played}.`,
+      `${f.away}: adaptive ${awayAdaptive.adaptive?.regimeStatus ?? "STABLE"}, half-life ${awayAdaptive.adaptive?.halfLifeDays ?? 120}d, raw sample ${awayAdaptive.adaptive?.rawSample ?? awayAdaptive.played}, effective sample ${awayAdaptive.adaptive?.effectiveSample ?? awayAdaptive.played}.`,
+      "ARRM dynamically applies exponential recency decay, continuous dynamic memory, current-season & venue bonuses, opponent-strength calibration, and Bayesian shrinkage.",
+    ],
+    limitations: [
+      "ARRM is an evidence-weighting mathematical layer; it does not fabricate missing historical data or news.",
+      ...(Math.max(homeAdaptive.adaptive?.shrinkagePct ?? 0, awayAdaptive.adaptive?.shrinkagePct ?? 0) >= 35
+        ? ["Small samples are shrunk toward league/global baselines."]
+        : []),
+    ],
+  };
+
+  const engines = [...initial.filter((e) => e.id !== "MOMENTUM"), adaptiveEngine, simEngine];
+  const goalsEngine = engines.find((e) => e.id === "GOALS");
+  if (goalsEngine) {
+    goalsEngine.values = {
+      ...goalsEngine.values,
+      lambdaHome: homeLambda,
+      lambdaAway: awayLambda,
+      expectedGoals: totalMean,
+      adaptiveRegime: 1,
+    };
+    goalsEngine.version = `${goalsEngine.version}-arrm`;
+  }
+  const totalsEngine = engines.find((e) => e.id === "TOTALS");
+  if (totalsEngine) {
+    totalsEngine.values = {
+      ...totalsEngine.values,
+      expectedGoals: totalMean,
+      "over0.5": over(0.5),
+      "over1.5": over(1.5),
+      "over2.5": over(2.5),
+      "over3.5": over(3.5),
+    };
+    totalsEngine.version = `${totalsEngine.version}-arrm`;
+  }
+  const bttsEngine = engines.find((e) => e.id === "BTTS");
+  if (bttsEngine) {
+    bttsEngine.values = {
+      ...bttsEngine.values,
+      yes: bttsYes,
+      no: 1 - bttsYes,
+    };
+    bttsEngine.version = `${bttsEngine.version}-arrm`;
+  }
+
   const teamCoverage = clamp(teamSample / 30),
     globalCoverage = clamp(globalN / 300),
     engineCoverage = clamp(initial.filter((e) => e.probabilities).length / 14);
@@ -312,17 +443,20 @@ export function analyzeActiveAuthoritatively(
         quality: e.quality,
       })),
     ),
+    adaptiveEngine.evidence.map((statement, i) => ({
+      id: `ARRM-${i}`,
+      source: "DERIVED_MODEL" as const,
+      statement,
+      quality: adaptiveEngine.quality,
+    })),
   );
-  const scoreGoal = engines.find((e) => e.id === "GOALS"),
-    gp = globalPrior(rows);
-  const lh = Number(scoreGoal?.values.lambdaHome ?? gp.lh),
-    la = Number(scoreGoal?.values.lambdaAway ?? gp.la);
+
   const predictedScore = (() => {
     let best = "1-1",
       bp = 0;
     for (let h = 0; h <= 8; h++)
       for (let a = 0; a <= 8; a++) {
-        const q = poisson(lh, h) * poisson(la, a);
+        const q = poisson(homeLambda, h) * poisson(awayLambda, a);
         if (q > bp) {
           bp = q;
           best = `${h}-${a}`;
@@ -330,8 +464,15 @@ export function analyzeActiveAuthoritatively(
       }
     return best;
   })();
-  const totals = engines.find((e) => e.id === "TOTALS")?.values ?? {},
-    bttsE = engines.find((e) => e.id === "BTTS")?.values ?? {};
+
+  const totalValues = {
+    "over0.5": over(0.5),
+    "over1.5": over(1.5),
+    "over2.5": over(2.5),
+    "over3.5": over(3.5),
+  };
+  const yes = bttsYes;
+
   const candidates: AuthoritativeMatchAnalysis["predictions"] = [
     { market: "HOME", label: base.home.team, probability: p.home, strength: p.home - 1 / 3 },
     { market: "DRAW", label: "Draw", probability: p.draw, strength: p.draw - 1 / 3 },
@@ -339,35 +480,31 @@ export function analyzeActiveAuthoritatively(
     {
       market: "OVER 1.5",
       label: "Over 1.5",
-      probability: Number(totals["over1.5"] ?? 0),
-      strength: Number(totals["over1.5"] ?? 0) - 0.5,
+      probability: totalValues["over1.5"],
+      strength: totalValues["over1.5"] - 0.5,
     },
     {
       market: "OVER 2.5",
       label: "Over 2.5",
-      probability: Number(totals["over2.5"] ?? 0),
-      strength: Number(totals["over2.5"] ?? 0) - 0.5,
+      probability: totalValues["over2.5"],
+      strength: totalValues["over2.5"] - 0.5,
     },
     {
       market: "OVER 3.5",
       label: "Over 3.5",
-      probability: Number(totals["over3.5"] ?? 0),
-      strength: Number(totals["over3.5"] ?? 0) - 0.5,
+      probability: totalValues["over3.5"],
+      strength: totalValues["over3.5"] - 0.5,
     },
     {
       market: "BTTS",
       label: "BTTS",
-      probability: Number(bttsE.yes ?? 0),
-      strength: Number(bttsE.yes ?? 0) - 0.5,
+      probability: yes,
+      strength: yes - 0.5,
     },
   ]
     .filter((x) => Number.isFinite(x.probability))
     .sort((a, b) => b.strength - a.strength)
     .slice(0, 5);
-  const totalValues = Object.fromEntries(
-    ["over0.5", "over1.5", "over2.5", "over3.5"].map((k) => [k, Number(totals[k] ?? 0)]),
-  );
-  const yes = Number(bttsE.yes ?? 0);
 
   const marketCandidateResults = buildAuthoritativeMarketCandidates(
     p,
@@ -382,24 +519,11 @@ export function analyzeActiveAuthoritatively(
     conflict,
   );
 
-  const finalPrediction =
-    decision === "INSUFFICIENT INTELLIGENCE"
-      ? "INSUFFICIENT INTELLIGENCE"
-      : decision === "HOME EDGE"
-        ? `${base.home.team} win`
-        : decision === "AWAY EDGE"
-          ? `${base.away.team} win`
-          : decision === "DRAW LEAN"
-            ? "Draw"
-            : marketCandidateResults.qualification.qualified &&
-                marketCandidateResults.qualification.actionableMarket
-              ? marketCandidateResults.qualification.actionableMarket.selection
-              : (candidates[0]?.label ?? "No strong prediction");
   const sparseWarning =
     teamSample === 0
       ? `No direct historical match was matched to either team in the assembled context. Probabilities use an explicit global prior (${globalN} completed rows), not a low-goal fallback.`
       : teamSample < 8
-        ? `Only ${teamSample} direct team observations were matched; the model remains available for analysis, but no actionable prediction is authorized.`
+        ? `Only ${teamSample} direct team observations were matched; the model remains available for analysis, but epistemic confidence is limited.`
         : undefined;
   const warnings = [
     ...new Set(
@@ -408,9 +532,12 @@ export function analyzeActiveAuthoritatively(
       ) as string[],
     ),
   ];
-  return {
+
+  const provisionalAnalysis: AuthoritativeMatchAnalysis = {
     ...base,
-    analysisVersion: "gfi-authoritative-v9",
+    home: homeAdaptive,
+    away: awayAdaptive,
+    analysisVersion: "gfi-authoritative-v10-arrm",
     engines,
     evidenceLedger: ledger,
     probabilities: p,
@@ -420,8 +547,14 @@ export function analyzeActiveAuthoritatively(
     confidence,
     decision,
     verdict: decision,
-    finalPrediction,
+    finalPrediction: "",
     predictedScore,
+    predictedScoreState:
+      (homeAdaptive.adaptive?.effectiveSample ?? 0) + (awayAdaptive.adaptive?.effectiveSample ?? 0) >= 8
+        ? "EVIDENCE_BACKED"
+        : "PRIOR_BASED",
+    predictedScoreNote:
+      "Scoreline and probabilities incorporate the Adaptive Recency + Regime Engine; sparse evidence is shrunk toward the prior.",
     predictions: candidates,
     marketCandidates: marketCandidateResults.candidates,
     valueAnalysis: marketCandidateResults.valueAnalysis,
@@ -440,8 +573,11 @@ export function analyzeActiveAuthoritatively(
     risk,
     aiReasoningPacket: {
       ...base.aiReasoningPacket,
-      analysisVersion: "gfi-authoritative-v9",
+      analysisVersion: "gfi-authoritative-v10-arrm",
       aiRole: "SINGLE_AUTHORITATIVE_EVIDENCE_WEIGHTED_ENGINE",
+      adaptiveRecencyRegime: adaptiveEngine.values,
+      adaptivePolicy:
+        "ARRM: recency decay + regime shift + current-season/venue weighting + opponent-strength adjustment + Bayesian-style shrinkage.",
       confidenceDefinition:
         "Epistemic confidence is evidence/coverage/consensus quality; it is never equal to event probability.",
       teamSample,
@@ -452,7 +588,7 @@ export function analyzeActiveAuthoritatively(
       quality,
       confidence,
       decision,
-      finalPrediction,
+      finalPrediction: "",
       predictedScore,
       evidenceLedger: ledger,
       sparsePriorUsed: teamSample === 0,
@@ -462,6 +598,36 @@ export function analyzeActiveAuthoritatively(
       valueAnalysis: marketCandidateResults.valueAnalysis,
       contradictionAnalysis: marketCandidateResults.contradiction,
       qualification: marketCandidateResults.qualification,
+    },
+    deploymentFingerprint: {
+      analysisVersion: "gfi-authoritative-v10-arrm",
+      engineId: "gfi-ensemble-authoritative-v10-arrm",
+      commitFingerprint: base.deploymentFingerprint?.commitFingerprint ?? "07085aebc",
+      generatedAt: new Date().toISOString(),
+    },
+  };
+
+  const actionable = deriveConsensusActionability(provisionalAnalysis);
+  const finalPrediction =
+    actionable.actionableMarket?.selection ??
+    (decision === "INSUFFICIENT INTELLIGENCE"
+      ? "INSUFFICIENT INTELLIGENCE"
+      : decision === "HOME EDGE"
+        ? `${base.home.team} win`
+        : decision === "AWAY EDGE"
+          ? `${base.away.team} win`
+          : decision === "DRAW LEAN"
+            ? "Draw"
+            : candidates[0]?.label ?? "No strong prediction");
+
+  return {
+    ...provisionalAnalysis,
+    qualification: actionable,
+    finalPrediction,
+    aiReasoningPacket: {
+      ...provisionalAnalysis.aiReasoningPacket,
+      finalPrediction,
+      qualification: actionable,
     },
   };
 }

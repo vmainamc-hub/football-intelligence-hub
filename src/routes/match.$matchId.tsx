@@ -134,6 +134,7 @@ function MatchIntelligence() {
   const livingFamilies = Array.isArray(living?.sourceFamilies)
     ? living.sourceFamilies.filter((x): x is string => typeof x === "string")
     : [];
+  const arrm = result.aiReasoningPacket?.adaptiveRecencyRegime as Record<string, any> | undefined;
   return (
     <div className="min-h-screen">
       <header className="border-b border-border bg-background/95 px-5 py-5 lg:px-10">
@@ -186,7 +187,7 @@ function MatchIntelligence() {
             </div>
 
             <div className="border-b border-border pb-4 md:border-b-0 md:border-r md:pr-6">
-              <div className="label-xs text-primary">AUTHORITATIVE 1X2 CALL</div>
+              <div className="label-xs text-primary">1X2 MODEL LEADER / CALL</div>
               <h2 className="mt-2 text-2xl font-bold">{oneX2.selection}</h2>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                 <span className="rounded bg-muted px-2 py-0.5 font-medium">
@@ -227,7 +228,7 @@ function MatchIntelligence() {
               <span className="font-semibold text-foreground">{result.quality ?? 50} / 100</span>
             </div>
             <div>
-              <span className="label-xs text-muted-foreground block">MODEL AGREEMENT</span>
+              <span className="label-xs text-muted-foreground block">INDEPENDENT MODEL AGREEMENT</span>
               <span className="font-semibold text-foreground">
                 {Math.round((result.consensus?.agreement ?? 0.5) * 100)}%
               </span>
@@ -386,6 +387,46 @@ function MatchIntelligence() {
             </div>
           </div>
         </section>
+
+        {arrm && (
+          <section className="mt-6 panel p-6">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="size-4 text-primary" />
+              <div className="label-xs text-primary">ADAPTIVE RECENCY & REGIME ENGINE (ARRM)</div>
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div className="rounded border border-border bg-card p-4">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-sm">{fixture.home}</span>
+                  <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                    {String(arrm.homeRegimeStatus ?? "STABLE")}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                  <div>Half-life: <span className="font-medium text-foreground">{arrm.homeHalfLifeDays ?? 120}d</span></div>
+                  <div>Raw / Effective: <span className="font-medium text-foreground">{arrm.homeRawSample ?? 0} / {arrm.homeEffectiveSample ?? 0}</span></div>
+                  <div>Opponent Strength: <span className="font-medium text-foreground">{arrm.homeOpponentStrength ?? 1}x</span></div>
+                  <div>Bayesian Shrinkage: <span className="font-medium text-foreground">{arrm.homeShrinkagePct ?? 0}%</span></div>
+                </div>
+              </div>
+              <div className="rounded border border-border bg-card p-4">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-sm">{fixture.away}</span>
+                  <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                    {String(arrm.awayRegimeStatus ?? "STABLE")}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                  <div>Half-life: <span className="font-medium text-foreground">{arrm.awayHalfLifeDays ?? 120}d</span></div>
+                  <div>Raw / Effective: <span className="font-medium text-foreground">{arrm.awayRawSample ?? 0} / {arrm.awayEffectiveSample ?? 0}</span></div>
+                  <div>Opponent Strength: <span className="font-medium text-foreground">{arrm.awayOpponentStrength ?? 1}x</span></div>
+                  <div>Bayesian Shrinkage: <span className="font-medium text-foreground">{arrm.awayShrinkagePct ?? 0}%</span></div>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
         <section className="mt-6">
           <div className="label-xs text-primary">MARKET INTELLIGENCE</div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
