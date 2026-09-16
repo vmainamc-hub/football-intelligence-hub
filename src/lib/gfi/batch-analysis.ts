@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { loadFreeFixtures, type MatchRow, type FreeLeague } from "./intelligence";
-import { analyzeLoadedFixture, type ServerMatchAnalysis } from "./server-pipeline";
+import { runMatchAnalysis, type ServerMatchAnalysis } from "./match-analysis";
 import { deriveConsensusActionability } from "./actionability";
 import type { MarketSignal } from "./market-map";
 
@@ -85,9 +85,22 @@ function diversifyCandidates(fixtures: ReturnType<typeof uniqueFixtures>, limit:
   while (selected.length < limit && ordered.length) { const index = cursor % ordered.length; const bucket = ordered[index][1]; selected.push(bucket.shift()!); if (!bucket.length) ordered.splice(index, 1); else cursor++; }
   return selected.sort((a, b) => kickoffValue(a).localeCompare(kickoffValue(b)));
 }
+
+/**
+ * Batch uses the same complete evidence pipeline as a single fixture. The only
+ * batch-specific layer is controlled orchestration: the already-loaded global
+ * fixture universe is shared, while research/living mining is limited to a
+ * small number of fixtures concurrently to avoid provider/database spikes.
+ */
 async function mapConcurrent<T, R>(items: T[], workerCount: number, worker: (item: T) => Promise<R | undefined>) {
   const results: Array<R | undefined> = new Array(items.length); let cursor = 0;
-  async function runWorker() { while (true) { const index = cursor++; if (index >= items.length) return; try { results[index] = await worker(items[index]); } catch { results[index] = undefined; } } }
+  async function runWorker() {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      try { results[index] = await worker(items[index]); } catch { results[index] = undefined; }
+    }
+  }
   await Promise.all(Array.from({ length: Math.min(workerCount, items.length) }, () => runWorker()));
   return results.filter((item): item is R => item !== undefined);
 }
@@ -139,12 +152,28 @@ export async function runBatchAnalysisInternal(data: BatchAnalysisInput): Promis
   const allCandidates = targetCandidates(uniqueFixtures(groups), intent);
   const analysisBudget = Math.min(360, Math.max(160, intent.count * 12));
   const pool = diversifyCandidates(allCandidates, analysisBudget);
-  const analysed = await mapConcurrent(pool, 8, async fixture => {
-    const analysis = analyzeLoadedFixture(fixture, fixture.code, groups), signal = candidateToSignal(analysis, intent);
+
+  // IMPORTANT: do not call analyzeLoadedFixture directly here. That bypassed
+  // the single-match research/living-reservoir pipeline and produced generic
+  // fallback probabilities. Every fixture now runs the same end-to-end path:
+  // living read -> conditional research/Tavily -> on-demand mining when empty
+  // -> persistence/reload -> authoritative engine -> ARRM -> actionability.
+  // Four concurrent slots provide controlled provider/database pressure.
+  const analysed = await mapConcurrent(pool, 4, async fixture => {
+    const analysis = await runMatchAnalysis(fixture.code, fixture, groups);
+    const signal = candidateToSignal(analysis, intent);
     if (!signal || !Number.isFinite(signal.probability)) return undefined;
     const evidence = analysis.pipeline.evidenceMode;
-    const reason = `Actionable prediction selected by the authoritative cross-engine model. Probability ${(signal.probability * 100).toFixed(1)}%; confidence ${analysis.confidence}%; risk ${analysis.risk}; evidence mode ${evidence}. Dynamic batch ranking rewards meaningful market conviction and penalizes repetitive wide safety lines.`;
-    return { fixture, analysis, market: signal, score: selectionScore(analysis, signal, intent.mode), status: "QUALIFIED", reason } satisfies BatchSelection;
+    const research = analysis.aiReasoningPacket?.research;
+    const living = analysis.aiReasoningPacket?.livingEvidence;
+    const researchSummary = research
+      ? `research ${research.webMatches ?? 0} web observations / ${research.reservoirMatches ?? 0} stored observations`
+      : "research completed";
+    const livingSummary = living
+      ? `living ${living.evidenceCount ?? 0} observations / ${living.sourceCount ?? 0} sources`
+      : "living reservoir checked";
+    const reason = `Actionable prediction selected by the authoritative cross-engine model after the full single-match evidence pipeline. Probability ${(signal.probability * 100).toFixed(1)}%; confidence ${analysis.confidence}%; risk ${analysis.risk}; evidence mode ${evidence}; ${researchSummary}; ${livingSummary}. Dynamic batch ranking rewards meaningful market conviction and penalizes repetitive wide safety lines.`;
+    return { fixture, analysis, market: signal, score: selectionScore(analysis, signal, intent), status: "QUALIFIED", reason } satisfies BatchSelection;
   });
 
   const ranked = analysed.sort((a, b) => b.score - a.score);
@@ -152,9 +181,6 @@ export async function runBatchAnalysisInternal(data: BatchAnalysisInput): Promis
   for (const row of ranked) {
     const id = fixtureId(row.fixture); if (usedFixtures.has(id)) continue;
     const family = marketFamily(row.market), count = familyCounts.get(family) ?? 0;
-    // Portfolio pressure is soft, not a hard prohibition. A genuinely dominant
-    // market can still repeat, but repeated 1.5/3.5 safety lines become progressively
-    // harder to select when equally-supported 1X2, 2.5, BTTS or double-chance actions exist.
     const pressure = count === 0 ? 0 : Math.min(0.28, 0.055 * count * (family === "TOTALS_15" || family === "TOTALS_35" ? 1.35 : 1));
     const adjusted = row.score - pressure;
     if (adjusted < -1) continue;
@@ -164,7 +190,9 @@ export async function runBatchAnalysisInternal(data: BatchAnalysisInput): Promis
     if (selected.length >= intent.count) break;
   }
   const generatedAt = new Date().toISOString();
-  const message = selected.length >= intent.count ? `${selected.length} unique actionable predictions returned from a dynamically diversified ${analysed.length}-match authoritative analysis set.` : `${intent.count} requested. ${selected.length} actionable predictions were available from ${analysed.length} analysed candidates.`;
+  const message = selected.length >= intent.count
+    ? `${selected.length} unique actionable predictions returned after full evidence warming/research, persistence reload, ARRM and authoritative actionability across ${analysed.length} analysed fixtures.`
+    : `${intent.count} requested. ${selected.length} actionable predictions were available after full evidence warming/research and ${analysed.length} completed authoritative analyses.`;
   return { request, intent, requested: intent.count, candidatePool: allCandidates.length, analysisBudget: pool.length, analysed: analysed.length, qualified: ranked.length, returned: selected.length, selections: selected, generatedAt, message };
 }
 export const runBatchAnalysis = createServerFn({ method: "POST" }).inputValidator((input: unknown) => input as BatchAnalysisInput).handler(async ({ data }): Promise<BatchAnalysisResponse> => runBatchAnalysisInternal(data));
