@@ -21,13 +21,35 @@ export type AIAnalystCall = {
   guardrails: string[];
 };
 
+export type CouncilDiagnosticAttempt = {
+  attempt: number;
+  model: string;
+  status: number | string;
+  elapsedMs: number;
+  reachedGemini: boolean;
+  responseBodyReceived: boolean;
+  jsonParsed: boolean;
+  candidatesReturned: boolean;
+  structuredOutputValid: boolean;
+  cleanPanelRejectedAnything: boolean;
+  decisionApplied: boolean;
+  error?: string;
+};
+
 export type FootballExpertPanel = {
   status: "ACTIVE" | "UNAVAILABLE" | "ERROR";
-  executionState: "AVAILABLE" | "UNAVAILABLE" | "ERROR";
   provider: "GEMINI" | "NONE";
   model: string;
   generatedAt: string;
   architectureVersion: "gfi-ai-football-council-v2";
+  fallbackModelUsed?: boolean;
+  retryAttempts?: number;
+  diagnostics?: {
+    attempts: CouncilDiagnosticAttempt[];
+    resolvedAttempt?: number;
+    finalStatus: string;
+    decisionApplied: boolean;
+  };
   identityCheck: { status: "PASS" | "WARN" | "FAIL"; homeConfidence: number; awayConfidence: number; competitionConfidence: number; notes: string[] };
   teamStrength: {
     home: { relative: "STRONGER" | "WEAKER" | "SIMILAR" | "UNKNOWN"; rationale: string };
@@ -44,19 +66,44 @@ export type FootballExpertPanel = {
   limitations: string[];
 };
 
-type PanelInput = { fixture: MatchRow; analysis: AuthoritativeMatchAnalysis; evidenceFacts?: Array<{ title: string; factType: string; sourceDomain: string; sourceUrl: string }> };
+export type PanelInput = {
+  fixture: MatchRow;
+  analysis: AuthoritativeMatchAnalysis;
+  evidenceFacts?: Array<{ title: string; factType: string; sourceDomain: string; sourceUrl: string }>;
+  options?: {
+    fetcher?: (url: string, init?: RequestInit) => Promise<Response>;
+    sleepFn?: (ms: number) => Promise<void>;
+    primaryModel?: string;
+    fallbackModel?: string;
+  };
+};
 
-const emptyPanel = (status: FootballExpertPanel["status"], model: string, note: string, analysis?: AuthoritativeMatchAnalysis): FootballExpertPanel => {
+export const emptyPanel = (
+  status: FootballExpertPanel["status"],
+  model: string,
+  note: string,
+  analysis?: AuthoritativeMatchAnalysis,
+  diagnostics?: FootballExpertPanel["diagnostics"],
+): FootballExpertPanel => {
   const fallback = analysis?.qualification?.actionableMarket;
-  const executionState = status === "UNAVAILABLE" ? "UNAVAILABLE" : "ERROR";
   return {
-    status, executionState, provider: "NONE", model, generatedAt: new Date().toISOString(), architectureVersion: "gfi-ai-football-council-v2",
+    status,
+    provider: "NONE",
+    model,
+    generatedAt: new Date().toISOString(),
+    architectureVersion: "gfi-ai-football-council-v2",
+    fallbackModelUsed: false,
+    retryAttempts: diagnostics?.attempts?.length ?? 0,
+    diagnostics,
     identityCheck: { status: "WARN", homeConfidence: 0, awayConfidence: 0, competitionConfidence: 0, notes: [note] },
-    teamStrength: { home: { relative: "UNKNOWN", rationale: "Not assessed because the AI council did not execute." }, away: { relative: "UNKNOWN", rationale: "Not assessed because the AI council did not execute." }, strengthGap: "UNKNOWN", opponentQualityAdjustment: "Not assessed because the AI council did not execute." },
-    realityCheck: { status: "TENSION", score: 0, flags: ["AI council unavailable; football reality was not assessed."] }, panel: [], debate: [],
+    teamStrength: { home: { relative: "UNKNOWN", rationale: note }, away: { relative: "UNKNOWN", rationale: note }, strengthGap: "UNKNOWN", opponentQualityAdjustment: note },
+    realityCheck: { status: "TENSION", score: 0, flags: [note] },
+    panel: [],
+    debate: [],
     chair: { summary: note, strongestCase: "AI council unavailable.", strongestCountercase: "AI council unavailable.", unresolvedQuestion: "Current team strength versus statistical context remains unresolved.", decision: "REVALIDATE", severity: "SIGNIFICANT", revalidationReason: note },
     analystCall: { status: "FALLBACK", market: fallback?.market ?? "QUANTITATIVE", selection: fallback?.label ?? analysis?.finalPrediction ?? "Quantitative engine result", callType: "OTHER", rationale: "The AI council was unavailable, so the validated quantitative selection was retained.", conviction: "LOW", evidenceQuality: "LIMITED", quantitativeLeader: fallback?.label ?? analysis?.finalPrediction ?? "Not supplied", quantitativeProbability: Math.round((fallback?.modelProbability ?? 0) * 100), divergenceFromQuantitativeLeader: false, divergenceReason: "", guardrails: [note] },
-    marketReview: { quantitativeLeader: fallback?.label ?? analysis?.finalPrediction ?? "", selectedMarket: fallback?.label ?? analysis?.finalPrediction ?? "", panelView: "AI unavailable; quantitative selection retained.", alternatives: [] }, limitations: [note],
+    marketReview: { quantitativeLeader: fallback?.label ?? analysis?.finalPrediction ?? "", selectedMarket: fallback?.label ?? analysis?.finalPrediction ?? "", panelView: "AI unavailable; quantitative selection retained.", alternatives: [] },
+    limitations: [note],
   };
 };
 
@@ -64,7 +111,7 @@ function safeNumber(value: unknown, fallback = 0) { const n = Number(value); ret
 const clampPct = (v: unknown) => Math.max(0, Math.min(100, safeNumber(v)));
 const text = (v: unknown, fallback = "") => typeof v === "string" ? v : fallback;
 
-function marketSurface(analysis: AuthoritativeMatchAnalysis): Array<{ market: string; selection: string; probability: number; qualification: string }> {
+export function marketSurface(analysis: AuthoritativeMatchAnalysis): Array<{ market: string; selection: string; probability: number; qualification: string }> {
   const candidates = Array.isArray(analysis.marketCandidates) ? analysis.marketCandidates : [];
   const rows = candidates.filter((c: MarketCandidate) => Number.isFinite(c.modelProbability)).map((c: MarketCandidate) => ({ market: c.market, selection: c.selection, probability: Math.round(c.modelProbability * 100), qualification: c.qualificationStatus }));
   const seen = new Set(rows.map((r) => `${r.market}|${r.selection}`));
@@ -77,12 +124,25 @@ function marketSurface(analysis: AuthoritativeMatchAnalysis): Array<{ market: st
   return rows.sort((a, b) => b.probability - a.probability).slice(0, 32);
 }
 
-function cleanPanel(value: any, model: string, analysis: AuthoritativeMatchAnalysis): FootballExpertPanel {
+export function cleanPanel(
+  value: any,
+  model: string,
+  analysis: AuthoritativeMatchAnalysis,
+  fallbackModelUsed = false,
+  retryAttempts = 1,
+  diagnostics?: FootballExpertPanel["diagnostics"],
+): { panel: FootballExpertPanel; rejectedAnything: boolean } {
+  let rejectedAnything = false;
   const raw = value && typeof value === "object" ? value : {};
   const surface = marketSurface(analysis);
   const allowedSelections = new Set(surface.map((x) => x.selection));
   const requestedSelection = text(raw.analystCall?.selection || raw.marketReview?.selectedMarket);
-  const selected = allowedSelections.has(requestedSelection) ? requestedSelection : "";
+  let selected = "";
+  if (allowedSelections.has(requestedSelection)) {
+    selected = requestedSelection;
+  } else if (requestedSelection) {
+    rejectedAnything = true;
+  }
   const quantitativeLeader = surface[0]?.selection ?? analysis.finalPrediction;
   const selectedRow = surface.find((x) => x.selection === selected);
   const fallbackRow = surface.find((x) => x.selection === quantitativeLeader);
@@ -105,8 +165,16 @@ function cleanPanel(value: any, model: string, analysis: AuthoritativeMatchAnaly
   const evidenceQuality = ["LIMITED", "MODERATE", "GOOD", "STRONG"].includes(raw.analystCall?.evidenceQuality) ? raw.analystCall.evidenceQuality : "LIMITED";
   const divergence = finalSelection !== quantitativeLeader;
   const safeGuardrails = Array.isArray(raw.analystCall?.guardrails) ? raw.analystCall.guardrails : [];
-  return {
-    status: "ACTIVE", executionState: "AVAILABLE", provider: "GEMINI", model, generatedAt: new Date().toISOString(), architectureVersion: "gfi-ai-football-council-v2",
+
+  const cleaned: FootballExpertPanel = {
+    status: "ACTIVE",
+    provider: "GEMINI",
+    model,
+    generatedAt: new Date().toISOString(),
+    architectureVersion: "gfi-ai-football-council-v2",
+    fallbackModelUsed,
+    retryAttempts,
+    diagnostics,
     identityCheck: { status: identityStatus, homeConfidence: clampPct(raw.identityCheck?.homeConfidence), awayConfidence: clampPct(raw.identityCheck?.awayConfidence), competitionConfidence: clampPct(raw.identityCheck?.competitionConfidence), notes: notes.filter((x: unknown): x is string => typeof x === "string").slice(0, 8) },
     teamStrength: { home: { relative: validRelative(raw.teamStrength?.home?.relative), rationale: text(raw.teamStrength?.home?.rationale, "No supported assessment supplied.") }, away: { relative: validRelative(raw.teamStrength?.away?.relative), rationale: text(raw.teamStrength?.away?.rationale, "No supported assessment supplied.") }, strengthGap: ["HOME_CLEAR", "AWAY_CLEAR", "CLOSE", "UNKNOWN"].includes(raw.teamStrength?.strengthGap) ? raw.teamStrength.strengthGap : "UNKNOWN", opponentQualityAdjustment: text(raw.teamStrength?.opponentQualityAdjustment, "Opponent-quality adjustment not established from supplied evidence.") },
     realityCheck: { status: realityStatus, score: clampPct(raw.realityCheck?.score), flags: flags.filter((x: unknown): x is string => typeof x === "string").slice(0, 10) },
@@ -117,13 +185,23 @@ function cleanPanel(value: any, model: string, analysis: AuthoritativeMatchAnaly
     marketReview: { quantitativeLeader, selectedMarket: finalSelection, panelView: text(raw.marketReview?.panelView, "Council synthesis complete."), alternatives: alternatives.filter((x: unknown): x is string => typeof x === "string").filter((x) => allowedSelections.has(x)).slice(0, 6) },
     limitations: limitations.filter((x: unknown): x is string => typeof x === "string").slice(0, 10),
   };
+  return { panel: cleaned, rejectedAnything };
 }
 
-function applyAnalystDecision(analysis: AuthoritativeMatchAnalysis, panel: FootballExpertPanel) {
-  if (panel.status !== "ACTIVE" || panel.analystCall.status !== "ACTIVE") return;
-  if (panel.identityCheck.status === "FAIL" || panel.chair.severity === "SEVERE") return;
+export function applyAnalystDecision(analysis: AuthoritativeMatchAnalysis, panel: FootballExpertPanel): { applied: boolean; reason: string } {
+  if (panel.status !== "ACTIVE" || panel.analystCall.status !== "ACTIVE") {
+    return { applied: false, reason: "Panel or call not active" };
+  }
+  if (panel.identityCheck.status === "FAIL") {
+    return { applied: false, reason: "Identity check status FAIL — quantitative fallback preserved" };
+  }
+  if (panel.chair.severity === "SEVERE") {
+    return { applied: false, reason: "Chair severity SEVERE — quantitative fallback preserved" };
+  }
   const selection = panel.analystCall.selection;
-  if (!selection) return;
+  if (!selection) {
+    return { applied: false, reason: "No selection present on analyst call" };
+  }
   analysis.finalPrediction = selection;
   if (selection === `${analysis.home.team} Win`) analysis.decision = "HOME EDGE";
   else if (selection === `${analysis.away.team} Win`) analysis.decision = "AWAY EDGE";
@@ -137,115 +215,253 @@ function applyAnalystDecision(analysis: AuthoritativeMatchAnalysis, panel: Footb
     quantitativeLeaderBeforeAI: panel.analystCall.quantitativeLeader,
     aiDecisionAuthority: true,
   };
+  return { applied: true, reason: `AI Analyst Call applied: ${selection}` };
 }
 
-function compactEngineDigest(analysis: AuthoritativeMatchAnalysis) {
-  return analysis.engines.map((e) => ({
+export async function runFootballExpertPanel(input: PanelInput): Promise<FootballExpertPanel> {
+  const key = process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim() || (process.env as any).API_KEY?.trim();
+  const primaryModel = input.options?.primaryModel || process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
+  const fallbackModel = input.options?.fallbackModel || (primaryModel === "gemini-3.7-flash" ? "gemini-3.8-flash" : "gemini-3.7-flash");
+
+  if (!key) {
+    console.warn("[GeminiCouncil] GEMINI CONFIGURATION MISSING: Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured in the environment.");
+    return emptyPanel(
+      "UNAVAILABLE",
+      primaryModel,
+      "GEMINI CONFIGURATION MISSING: GEMINI_API_KEY or GOOGLE_API_KEY is not configured in the server environment; the validated quantitative result was retained.",
+      input.analysis,
+    );
+  }
+
+  const { fixture, analysis, evidenceFacts = [] } = input;
+  const surface = marketSurface(analysis);
+  const engineDigest = analysis.engines.map((e) => ({
     id: e.id,
     name: e.name,
     signal: e.signal,
     confidence: e.confidence,
     quality: e.quality,
     version: e.version,
+    values: e.values,
     probabilities: e.probabilities,
-  })).slice(0, 20);
-}
+  })).slice(0, 28);
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-async function requestGemini(model: string, key: string, system: string, user: string): Promise<{ response?: Response; error?: string; transient?: boolean }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
-  try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: "user", parts: [{ text: user }] }],
-        generationConfig: { responseMimeType: "application/json", thinkingConfig: { thinkingLevel: "medium" } },
-      }),
-      signal: controller.signal,
-    });
-    if (response.ok) return { response };
-    const errorBody = await response.text().catch(() => "");
-    const detail = errorBody.replace(/\s+/g, " ").slice(0, 220);
-    return { error: `HTTP ${response.status}${detail ? `: ${detail}` : ""}`, transient: [408, 429, 500, 502, 503, 504].includes(response.status) };
-  } catch (error) {
-    const message = error instanceof Error && error.name === "AbortError" ? "timeout after 30 seconds" : error instanceof Error ? error.message.slice(0, 180) : "unknown request failure";
-    return { error: message, transient: true };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-export async function runFootballExpertPanel(input: PanelInput): Promise<FootballExpertPanel> {
-  const key = process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim();
-  const configuredModel = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
-  if (!key) return emptyPanel("UNAVAILABLE", configuredModel, "GEMINI_API_KEY/GOOGLE_API_KEY is not configured; the validated quantitative result was retained.", input.analysis);
-
-  const { fixture, analysis, evidenceFacts = [] } = input;
-  const surface = marketSurface(analysis);
-  const engineDigest = compactEngineDigest(analysis);
   const packet = {
     fixture: { home: fixture.home, away: fixture.away, date: fixture.date, time: fixture.time, competition: fixture.league, competitionCode: fixture.sourceId },
     marketSurface: surface,
-    authoritative: { decision: analysis.decision, finalPrediction: analysis.finalPrediction, predictedScore: analysis.predictedScore, risk: analysis.risk, quality: analysis.quality, consensus: analysis.consensus, probabilities: analysis.probabilities, qualification: analysis.qualification },
+    authoritative: {
+      decision: analysis.decision,
+      finalPrediction: analysis.finalPrediction,
+      predictedScore: analysis.predictedScore,
+      risk: analysis.risk,
+      quality: analysis.quality,
+      consensus: analysis.consensus,
+      probabilities: analysis.probabilities,
+      qualification: analysis.qualification,
+    },
     teams: { home: analysis.home, away: analysis.away },
     engines: engineDigest,
-    researchFacts: evidenceFacts.slice(0, 15),
-    evidence: { metrics: analysis.evidenceMetrics, state: analysis.evidenceState, pipeline: (analysis as any).pipeline, warnings: analysis.warnings.slice(0, 10) },
+    researchFacts: evidenceFacts.slice(0, 30),
+    evidence: { metrics: analysis.evidenceMetrics, state: analysis.evidenceState, pipeline: (analysis as any).pipeline, warnings: analysis.warnings.slice(0, 15) },
   };
 
-  const system = `You are the AI Football Analyst Council inside a serious football-intelligence application. Reason like an elite multidisciplinary football analysis room, not a probability sorter. The deterministic model is the mathematical evidence layer, but the council has analytical authority to select the final football market from the supplied market surface.
+  const system = `You are the AI Football Analyst Council inside a serious football-intelligence application. Your job is to reason like an elite multidisciplinary football analysis room, not to mechanically select the largest probability. The supplied deterministic model is the mathematical evidence layer, but the council has analytical authority to select the final football market from the supplied market surface. You MAY select HOME WIN, DRAW, AWAY WIN, BTTS, OVER/UNDER or another listed computed market when the football evidence supports it. You MUST NOT invent a market that is not in marketSurface, alter supplied probabilities, or fabricate injuries, lineups, xG, odds, rankings, transfers, league strengths, news or team facts. If a fact is absent, say UNKNOWN.
 
-You may select HOME WIN, DRAW, AWAY WIN, BTTS, OVER/UNDER, DNB, DOUBLE CHANCE or another listed computed market when supported. You MUST NOT invent a market, alter supplied probabilities, or fabricate injuries, lineups, xG, odds, rankings, transfers, league strengths, news or team facts. If a fact is absent, say UNKNOWN.
+Council roles (all must contribute): 1) Team Strength Scout — true relative strength, opponent quality, cross-competition distortion, attack/defence level, venue strength. 2) Tactical Analyst — style matchup, pressing, transitions, defensive structure, game-state implications. 3) Statistical Analyst — interrogates quantitative probabilities, calibration, score distribution and model agreement. 4) Form & Trajectory Analyst — separates sustainable performance from noisy recent results and schedule effects. 5) Context & Motivation Analyst — only uses supplied current context; never invents motivation. 6) Competition Strength Analyst — checks competition labels and whether cross-league priors could distort the result. 7) Data Forensic Analyst — hunts identity mismatch, contamination, duplicate evidence, sparse samples and contradictions. 8) Contrarian Analyst — constructs the strongest credible counter-case.
 
-Eight roles must contribute: Team Strength Scout; Tactical Analyst; Statistical Analyst; Form & Trajectory Analyst; Context & Motivation Analyst; Competition Strength Analyst; Data Forensic Analyst; Contrarian Analyst.
+Process: FIRST verify fixture identity and competition. SECOND assess team strength before interpreting raw form. THIRD interrogate the complete market surface. FOURTH debate the strongest disagreement. FIFTH Chair decides the most informative football conclusion, not automatically the safest market. A high-probability safe market may be rejected in favor of a directional outcome when the council has a defensible football reason. Conversely, do not force a winner when the evidence genuinely supports goals/BTTS instead. The final call must be exactly one selection from marketSurface. Never use an invented probability for the AI call. Conviction is qualitative and means strength of analytical evidence, not event probability.
 
-Process: verify fixture identity and competition; assess relative team strength and opponent quality; interrogate the complete market surface; debate the strongest disagreement; then have the Chair choose the most informative football conclusion rather than automatically choosing the safest market. A high-probability safe market may be rejected for a directional outcome when supported. Conversely, do not force a winner when goals/BTTS is better supported.
+Guardrails: identity FAIL or severe data contamination => REVALIDATE and retain quantitative result as fallback. Identity PASS/WARN with coherent evidence => council may select any supported computed market. Limited evidence does not automatically force NO_TRADE; label evidence quality honestly. Do not majority-vote mechanically: the Chair weighs evidence quality, specialist expertise, contradiction severity and football plausibility. Return JSON only. Include exactly eight panel experts, a debate, Chair synthesis, and analystCall.`;
 
-Guardrails: identity FAIL or severe contamination => REVALIDATE and retain the quantitative result as fallback. Identity PASS/WARN with coherent evidence permits any supported computed market. Limited evidence does not automatically mean NO_TRADE. Do not majority-vote mechanically; weigh evidence quality, specialist expertise, contradiction severity and football plausibility.
+  const user = `Run the complete council on this fixture. The central question is: what is the strongest football conclusion, even if it is NOT the highest raw probability market? The council must be willing to choose Home Win, Draw or Away Win when team-strength/tactical/context evidence makes that the more informative conclusion. Conversely, it must be willing to choose goals/BTTS when direction is not sufficiently supported. Market surface is the legal action space.\n\nPACKET:\n${JSON.stringify(packet)}`;
 
-Return JSON only. Exactly eight panel experts. Keep each expert assessment concise, use at most two evidence bullets per expert, keep debate to at most four exchanges, and keep the Chair synthesis concise. The final analystCall.selection must exactly match one selection from marketSurface. Conviction is qualitative, not event probability.`;
-  const user = `Determine the strongest football conclusion for this fixture, even if it is NOT the highest raw probability market. The council must be willing to choose Home Win, Draw or Away Win when team-strength/tactical/context evidence makes that more informative, and must be willing to choose goals/BTTS when direction is not sufficiently supported.\n\nPACKET:\n${JSON.stringify(packet)}`;
+  const fetcher = input.options?.fetcher || fetch;
+  const sleepFn = input.options?.sleepFn || ((ms: number) => new Promise((r) => setTimeout(r, ms)));
 
-  const primary = configuredModel;
-  const fallbackModel = primary === "gemini-3.8-flash" ? "gemini-3.7-flash" : "gemini-3.8-flash";
-  const attempts: Array<{ model: string; waitMs: number }> = [
-    { model: primary, waitMs: 0 },
-    { model: primary, waitMs: 1200 },
-    { model: fallbackModel, waitMs: 0 },
+  // Retry and fallback sequence:
+  // Attempt 1: primaryModel (e.g. gemini-3.8-flash)
+  // Attempt 2: primaryModel retry after 1.5s delay if transient error (429, 500, 502, 503, 504, timeout)
+  // Attempt 3: fallbackModel (e.g. gemini-3.7-flash) after 1.0s delay if transient error
+  const attemptsPlan = [
+    { attempt: 1, model: primaryModel, isFallback: false, waitBeforeMs: 0 },
+    { attempt: 2, model: primaryModel, isFallback: false, waitBeforeMs: 1500 },
+    { attempt: 3, model: fallbackModel, isFallback: true, waitBeforeMs: 1000 },
   ];
-  const errors: string[] = [];
 
-  for (const attempt of attempts) {
-    if (attempt.waitMs) await sleep(attempt.waitMs);
-    const result = await requestGemini(attempt.model, key, system, user);
-    if (result.response) {
-      try {
-        const body = await result.response.json() as any;
-        const rawText = body?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).filter(Boolean).join("\n") ?? "";
-        if (!rawText) {
-          errors.push(`${attempt.model}: empty response`);
+  const diagnosticAttempts: CouncilDiagnosticAttempt[] = [];
+
+  for (const step of attemptsPlan) {
+    if (step.waitBeforeMs > 0) {
+      await sleepFn(step.waitBeforeMs);
+    }
+
+    const t0 = Date.now();
+    const diag: CouncilDiagnosticAttempt = {
+      attempt: step.attempt,
+      model: step.model,
+      status: "INITIATED",
+      elapsedMs: 0,
+      reachedGemini: false,
+      responseBodyReceived: false,
+      jsonParsed: false,
+      candidatesReturned: false,
+      structuredOutputValid: false,
+      cleanPanelRejectedAnything: false,
+      decisionApplied: false,
+    };
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 28_000);
+
+      const requestPayload = {
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ role: "user", parts: [{ text: user }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          // Empirical optimization: low thinking provides expert reasoning while avoiding 503 high-demand spike failures
+          thinkingConfig: { thinkingLevel: "low" },
+        },
+      };
+
+      const response = await fetcher(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(step.model)}:generateContent`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+          },
+          body: JSON.stringify(requestPayload),
+          signal: controller.signal,
+        },
+      );
+      clearTimeout(timeout);
+
+      diag.elapsedMs = Date.now() - t0;
+      diag.reachedGemini = true;
+      diag.status = response.status;
+
+      if (!response.ok) {
+        let errSnippet = "";
+        try {
+          const errBody = await response.text();
+          diag.responseBodyReceived = true;
+          errSnippet = errBody.slice(0, 150);
+        } catch {
+          // ignore body read error
+        }
+
+        const isTransient = [429, 500, 502, 503, 504].includes(response.status);
+        diag.error = `HTTP ${response.status}: ${errSnippet}`;
+        console.warn(
+          `[GeminiCouncil] Attempt ${step.attempt} (${step.model}) returned HTTP ${response.status} in ${diag.elapsedMs}ms (transient: ${isTransient})`,
+        );
+
+        diagnosticAttempts.push(diag);
+
+        if (isTransient && step.attempt < attemptsPlan.length) {
           continue;
+        } else if (!isTransient) {
+          // Non-transient client error (e.g. 400 or 401)
+          break;
         }
-        const parsed = JSON.parse(rawText.replace(/^```json\s*/i, "").replace(/\s*```$/i, ""));
-        const panel = cleanPanel(parsed, attempt.model, analysis);
-        applyAnalystDecision(analysis, panel);
-        if (attempt.model !== primary) {
-          panel.limitations = [`Primary Gemini model ${primary} was temporarily unavailable; council completed with fallback ${attempt.model}.`, ...panel.limitations].slice(0, 10);
-        }
-        return panel;
-      } catch (error) {
-        errors.push(`${attempt.model}: invalid council response${error instanceof Error ? ` (${error.message.slice(0, 120)})` : ""}`);
+        continue;
+      }
+
+      diag.responseBodyReceived = true;
+      const body = (await response.json()) as any;
+      const parts = body?.candidates?.[0]?.content?.parts;
+      if (Array.isArray(parts) && parts.length > 0) {
+        diag.candidatesReturned = true;
+      }
+
+      const rawText = parts?.map((p: any) => p?.text).filter(Boolean).join("\n") ?? "";
+      if (!rawText.trim()) {
+        diag.error = "No content parts returned in candidates";
+        console.warn(`[GeminiCouncil] Attempt ${step.attempt} (${step.model}): no candidate content in ${diag.elapsedMs}ms`);
+        diagnosticAttempts.push(diag);
+        continue;
+      }
+
+      // Robust JSON extraction stripping code blocks
+      const cleanJson = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+      let parsed: any;
+      try {
+        parsed = JSON.parse(cleanJson);
+        diag.jsonParsed = true;
+      } catch (parseErr: any) {
+        diag.error = `JSON parse failed: ${parseErr.message}`;
+        console.warn(`[GeminiCouncil] Attempt ${step.attempt} (${step.model}): JSON parse error in ${diag.elapsedMs}ms: ${parseErr.message}`);
+        diagnosticAttempts.push(diag);
+        continue;
+      }
+
+      const diagnosticsBundle = {
+        attempts: [...diagnosticAttempts, diag],
+        resolvedAttempt: step.attempt,
+        finalStatus: "SUCCESS",
+        decisionApplied: false,
+      };
+
+      const { panel, rejectedAnything } = cleanPanel(
+        parsed,
+        step.model,
+        analysis,
+        step.isFallback,
+        step.attempt,
+        diagnosticsBundle,
+      );
+
+      diag.structuredOutputValid = true;
+      diag.cleanPanelRejectedAnything = rejectedAnything;
+
+      const appResult = applyAnalystDecision(analysis, panel);
+      diag.decisionApplied = appResult.applied;
+      diagnosticsBundle.decisionApplied = appResult.applied;
+
+      console.log(
+        `[GeminiCouncil] Attempt ${step.attempt} (${step.model}) SUCCEEDED in ${diag.elapsedMs}ms | fallbackModelUsed=${step.isFallback} | decisionApplied=${appResult.applied} (${panel.analystCall.selection})`,
+      );
+
+      diagnosticAttempts.push(diag);
+      return panel;
+    } catch (err: any) {
+      diag.elapsedMs = Date.now() - t0;
+      const isAbort = err?.name === "AbortError";
+      diag.status = isAbort ? "TIMEOUT_28S" : "FETCH_ERROR";
+      diag.error = err?.message || String(err);
+      console.warn(
+        `[GeminiCouncil] Attempt ${step.attempt} (${step.model}) failed (${diag.status}) in ${diag.elapsedMs}ms: ${diag.error}`,
+      );
+      diagnosticAttempts.push(diag);
+      if (step.attempt < attemptsPlan.length) {
         continue;
       }
     }
-    if (result.error) errors.push(`${attempt.model}: ${result.error}`);
-    if (!result.transient) break;
   }
 
-  const summary = errors.join(" | ").slice(0, 700);
-  return emptyPanel("ERROR", primary, `AI council unavailable after resilient Gemini attempts; quantitative fallback retained. ${summary}`, analysis);
+  // All attempts exhausted
+  const diagnosticsSummary = diagnosticAttempts
+    .map((a) => `[#${a.attempt} ${a.model}: ${a.status} (${a.elapsedMs}ms)]`)
+    .join(", ");
+
+  console.error(
+    `[GeminiCouncil] ALL ATTEMPTS EXHAUSTED: ${diagnosticsSummary}. Collapsing safely to quantitative fallback.`,
+  );
+
+  const fallbackDiagnostics = {
+    attempts: diagnosticAttempts,
+    finalStatus: "ALL_ATTEMPTS_FAILED",
+    decisionApplied: false,
+  };
+
+  return emptyPanel(
+    "ERROR",
+    primaryModel,
+    `AI council unavailable after ${diagnosticAttempts.length} attempt(s) (${diagnosticsSummary}); validated quantitative selection was preserved.`,
+    analysis,
+    fallbackDiagnostics,
+  );
 }
+

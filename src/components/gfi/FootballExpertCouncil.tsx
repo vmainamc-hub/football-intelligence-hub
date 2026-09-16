@@ -15,7 +15,24 @@ export function FootballExpertCouncil({ panel }: Props) {
           <h2 className="mt-2 text-2xl font-semibold">Eight specialist analysts + Chair</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">The council reads the same evidence and quantitative market surface, debates the football meaning of that evidence, and can choose a different computed market when the football conclusion is more informative than the safest raw probability.</p>
         </div>
-        <div className="text-right text-xs text-muted-foreground"><div className={panel.status === "ACTIVE" ? "font-semibold text-emerald-500" : "font-semibold text-amber-500"}>{panel.status} · {panel.provider}</div><div className="mt-1">{panel.model} · {panel.architectureVersion}</div></div>
+        <div className="text-right text-xs text-muted-foreground">
+          <div className={panel.status === "ACTIVE" ? "font-semibold text-emerald-500" : "font-semibold text-amber-500"}>
+            {panel.status === "ACTIVE" ? "ACTIVE · GEMINI" : "AI COUNCIL UNAVAILABLE — QUANTITATIVE FALLBACK · NONE"}
+          </div>
+          {panel.fallbackModelUsed ? (
+            <div className="mt-1 inline-flex items-center gap-1 rounded bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+              <span>PROVIDER FALLBACK · {panel.model}</span>
+              <span className="text-[10px] text-muted-foreground font-normal">(primary model 3.8 high demand)</span>
+            </div>
+          ) : (
+            <div className="mt-1">
+              {panel.model} · {panel.architectureVersion}
+              {panel.retryAttempts && panel.retryAttempts > 1 ? (
+                <span className="ml-1 text-[11px] text-emerald-500 font-medium">(resolved attempt {panel.retryAttempts})</span>
+              ) : null}
+            </div>
+          )}
+        </div>
       </div>
 
       {unavailable && (

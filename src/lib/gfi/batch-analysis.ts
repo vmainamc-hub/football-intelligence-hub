@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { loadFreeFixtures, type MatchRow, type FreeLeague } from "./intelligence";
 import { runMatchAnalysis, type ServerMatchAnalysis } from "./match-analysis";
 import { deriveConsensusActionability } from "./actionability";
-import type { MarketSignal } from "./market-map";
+import { bestQualifiedMarket, type MarketSignal } from "./market-map";
 
 export type BatchIntent = {
   raw: string;
@@ -106,8 +106,6 @@ async function mapConcurrent<T, R>(items: T[], workerCount: number, worker: (ite
 }
 
 function candidateToSignal(result: ServerMatchAnalysis, intent: BatchIntent): MarketSignal | undefined {
-  const action = deriveConsensusActionability(result).actionableMarket;
-  if (!action) return undefined;
   if (intent.mode === "HOME" || intent.mode === "AWAY" || intent.mode === "DRAW") {
     const key = intent.mode === "HOME" ? "home" : intent.mode === "AWAY" ? "away" : "draw", p = result.probabilities[key];
     const selection = intent.mode === "HOME" ? `${result.home.team} Win` : intent.mode === "AWAY" ? `${result.away.team} Win` : "Draw";
@@ -118,7 +116,7 @@ function candidateToSignal(result: ServerMatchAnalysis, intent: BatchIntent): Ma
     if (!exact) return undefined;
     return { market: exact.market, selection: exact.selection, probability: exact.modelProbability, confidence: result.confidence, tier: exact.modelProbability >= 0.62 ? "PRIMARY" : "SECONDARY", rationale: `Authoritative model probability for ${exact.selection} is ${(exact.modelProbability * 100).toFixed(1)}%.` };
   }
-  return { market: action.market, selection: action.selection, probability: action.modelProbability, confidence: result.confidence, tier: "PRIMARY", rationale: action.whyConsidered ?? "Selected by the authoritative cross-engine actionability layer." };
+  return bestQualifiedMarket(result);
 }
 
 function selectionScore(result: ServerMatchAnalysis, signal: MarketSignal, mode: BatchIntent["mode"]) {

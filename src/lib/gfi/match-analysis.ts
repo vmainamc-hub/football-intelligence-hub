@@ -231,7 +231,9 @@ export async function runMatchAnalysis(
   analysis.aiReasoningPacket = {
     ...analysis.aiReasoningPacket,
     footballExpertPanel,
-    aiRole: "QUANTITATIVE_AUTHORITY_WITH_AI_FOOTBALL_EXPERT_COUNCIL",
+    aiRole: footballExpertPanel.status === "ACTIVE"
+      ? "AI_FOOTBALL_ANALYST_COUNCIL_WITH_CONTROLLED_DECISION_AUTHORITY"
+      : "QUANTITATIVE_AUTHORITY_WITH_AI_FOOTBALL_EXPERT_COUNCIL",
   };
   if (footballExpertPanel.status === "ACTIVE") {
     const chair = footballExpertPanel.chair;

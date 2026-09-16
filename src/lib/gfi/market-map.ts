@@ -11,12 +11,16 @@ export function buildSevenMarketComparison(result: AuthoritativeMatchAnalysis): 
 export function buildMainstreamMarketMap(result: AuthoritativeMatchAnalysis): MarketSignal[] { if (!result?.probabilities) return [{ market: "1X2", selection: "NO MARKET DATA", probability: 0, confidence: 0, tier: "WATCH", rationale: "No complete authoritative probability surface is available." }]; const { home, draw, away } = result.probabilities, ht = result.home.team, at = result.away.team, winner = home >= draw && home >= away ? ht : away >= draw ? at : "DRAW"; const out: MarketSignal[] = [signal("1X2", winner === "DRAW" ? "DRAW" : `${winner} WIN`, Math.max(home, draw, away), result, `Highest 1X2 probability ${pct(Math.max(home, draw, away))}%.`)]; const dc = [{ selection: "1X", probability: home + draw }, { selection: "X2", probability: draw + away }, { selection: "12", probability: home + away }].sort((a, b) => b.probability - a.probability)[0]; out.push(signal("DOUBLE CHANCE", dc.selection, dc.probability, result, `Two-result coverage ${pct(dc.probability)}%.`)); const dnbH = home / Math.max(0.0001, home + away), dnbA = away / Math.max(0.0001, home + away); out.push(signal("DRAW NO BET", dnbH >= dnbA ? `DNB — ${ht}` : `DNB — ${at}`, Math.max(dnbH, dnbA), result, "Draw removed from the win comparison.")); for (const line of [1.5, 2.5, 3.5] as const) { const o = Number(goal(result, `over${line}`)); if (!Number.isFinite(o)) continue; out.push(signal(`OVER/UNDER ${line}`, o >= 0.5 ? `OVER ${line}` : `UNDER ${line}`, Math.max(o, 1 - o), result, `Goal model probability ${pct(Math.max(o, 1 - o))}%.`)); } const b = Number(btts(result)); if (Number.isFinite(b)) out.push(signal("BTTS", b >= 0.5 ? "BTTS — YES" : "BTTS — NO", Math.max(b, 1 - b), result, `BTTS selection probability ${pct(Math.max(b, 1 - b))}%.`)); return out; }
 
 function aiSelectedMarket(result: AuthoritativeMatchAnalysis): MarketSignal | undefined {
-  const call = result.aiReasoningPacket?.aiAnalystCall as { status?: string; selection?: string; rationale?: string; conviction?: string } | undefined;
+  const call = result.aiReasoningPacket?.aiAnalystCall as { status?: string; selection?: string; rationale?: string; conviction?: string; market?: string } | undefined;
   if (!call || call.status !== "ACTIVE" || !call.selection) return undefined;
   const markets = buildMainstreamMarketMap(result);
-  const mapped = markets.find((m) => m.selection.toLowerCase() === call.selection!.toLowerCase()) ?? markets.find((m) => m.selection.toLowerCase().replace(/\s+/g, " ") === call.selection!.toLowerCase().replace(/\s+/g, " "));
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const targetNorm = norm(call.selection);
+  const mapped = markets.find((m) => norm(m.selection) === targetNorm)
+    || markets.find((m) => norm(m.selection).includes(targetNorm) || targetNorm.includes(norm(m.selection)))
+    || markets.find((m) => Boolean(call.market) && m.market.toLowerCase() === call.market!.toLowerCase());
   if (!mapped) return undefined;
-  return { ...mapped, tier: mapped.probability >= 0.62 ? "PRIMARY" : mapped.probability >= 0.54 ? "SECONDARY" : "WATCH", rationale: `${call.rationale ?? "AI Football Analyst Council selection."} Final selection comes from the computed market surface; underlying model probability is unchanged. AI conviction: ${call.conviction ?? "MODERATE"}.` };
+  return { ...mapped, selection: call.selection, tier: mapped.probability >= 0.62 ? "PRIMARY" : mapped.probability >= 0.54 ? "SECONDARY" : "WATCH", rationale: `${call.rationale ?? "AI Football Analyst Council selection."} Final selection comes from the computed market surface; underlying model probability is unchanged. AI conviction: ${call.conviction ?? "MODERATE"}.` };
 }
 
 export function bestQualifiedMarket(result: AuthoritativeMatchAnalysis): MarketSignal {
