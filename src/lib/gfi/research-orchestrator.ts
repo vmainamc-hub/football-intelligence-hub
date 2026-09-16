@@ -3,6 +3,7 @@ import { reservoirHistoricalContext, type ReservoirMatch } from "./data-reservoi
 import { queryUniversalFixtures } from "./universal-sources";
 import { fetchEspnFixtures } from "./espn-sources";
 import { acquireExpandedWebEvidence, type WebEvidenceResult } from "./tavily-research";
+import { sameTeamIdentity } from "./identity";
 import type { MatchRow } from "./intelligence";
 
 export { acquireExpandedWebEvidence, type WebEvidenceResult } from "./tavily-research";
@@ -25,7 +26,6 @@ const addDays = (v: string, n: number) => { const d = new Date(`${v}T12:00:00Z`)
 const dateFromQuery = (q: string) => q.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1];
 const stripDate = (q: string) => q.replace(/\b20\d{2}-\d{2}-\d{2}\b/g, " ").replace(/\s+/g, " ").trim();
 const parseTeams = (q: string) => { const clean = stripDate(q), m = clean.match(/^(.+?)\s+(?:vs\.?|v\.?|versus|against)\s+(.+)$/i); return m ? { home: m[1].trim(), away: m[2].trim() } : { home: clean, away: "" }; };
-const norm = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
 export async function performFixtureResearchInternal(queryRaw: string): Promise<ResearchResult> {
   const query = queryRaw.trim(), searchedAt = new Date().toISOString();
@@ -39,17 +39,24 @@ export async function performFixtureResearchInternal(queryRaw: string): Promise<
   const merged = new Map<string, MatchRow>();
   for (const r of stored) { const m = toMatch(r); merged.set(identity(m), m); }
   for (const r of live) merged.set(identity(r), r);
-  const hk = norm(home), ak = norm(away);
   for (const r of espn) {
-    const rh = norm(r.home), ra = norm(r.away), exact = hk && ak && (rh.includes(hk) || hk.includes(rh)) && (ra.includes(ak) || ak.includes(ra)), reverse = hk && ak && (rh.includes(ak) || ak.includes(rh)) && (ra.includes(hk) || hk.includes(ra));
+    if (r.hg === undefined || r.ag === undefined) continue;
+    const exact = sameTeamIdentity(r.home, home) && sameTeamIdentity(r.away, away);
+    const reverse = sameTeamIdentity(r.home, away) && sameTeamIdentity(r.away, home);
     if (exact || reverse) merged.set(identity(r), r);
   }
 
+  const historical = () => [...merged.values()].filter(r => r.hg !== undefined && r.ag !== undefined && (!fixtureDate || r.date < fixtureDate));
+  const homeEvidence = () => historical().filter(r => sameTeamIdentity(r.home, home) || sameTeamIdentity(r.away, home)).length;
+  const awayEvidence = () => historical().filter(r => sameTeamIdentity(r.home, away) || sameTeamIdentity(r.away, away)).length;
+  const h2hEvidence = () => historical().filter(r => (sameTeamIdentity(r.home, home) && sameTeamIdentity(r.away, away)) || (sameTeamIdentity(r.home, away) && sameTeamIdentity(r.away, home))).length;
+
   let webEvidence: WebEvidenceResult | undefined;
   let webMatches = 0;
-  const internalHistoryCount = [...merged.values()].filter(r => r.hg !== undefined && r.ag !== undefined).length;
-  // Internet acquisition is mandatory when fixture-specific history is sparse. Do not stop after a single fixture query.
-  if (internalHistoryCount < 8 && home && away) {
+  // Never use the size of the global reservoir to decide whether web research is needed.
+  // A database containing 575 unrelated rows is still a zero-evidence fixture.
+  const needsInternetResearch = Boolean(home && away && (homeEvidence() < 8 || awayEvidence() < 8 || h2hEvidence() < 2));
+  if (needsInternetResearch) {
     try {
       webEvidence = await acquireExpandedWebEvidence({ home, away, fixtureDate, league: undefined });
       for (const r of webEvidence.datedScoreRows) {
@@ -66,7 +73,7 @@ export async function performFixtureResearchInternal(queryRaw: string): Promise<
   const history = matches.filter(r => r.hg !== undefined && r.ag !== undefined).length;
   const fixtureEvidence = matches.some(r => fixtureDate ? r.date === fixtureDate : r.hg === undefined || r.ag === undefined);
   const coverage = Math.min(100, Math.round(Math.min(50, history * 2) + (fixtureEvidence ? 20 : 0) + (sources.length >= 2 ? 20 : 0) + (history > 10 ? 10 : 0)));
-  return { query, matches, reservoirMatches: stored.length, liveMatches: live.length + espn.filter(r => { const rh = norm(r.home), ra = norm(r.away); return hk && ak && ((rh.includes(hk) || hk.includes(rh)) && (ra.includes(ak) || ak.includes(ra)) || (rh.includes(ak) || ak.includes(ra)) && (ra.includes(hk) || hk.includes(ra))); }).length, webMatches, distinctSources: sources.length, sources, coverage, searchedAt, webEvidence };
+  return { query, matches, reservoirMatches: stored.length, liveMatches: live.length + espn.filter(r => { return (sameTeamIdentity(r.home, home) && sameTeamIdentity(r.away, away)) || (sameTeamIdentity(r.home, away) && sameTeamIdentity(r.away, home)); }).length, webMatches, distinctSources: sources.length, sources, coverage, searchedAt, webEvidence };
 }
 
 export const researchFixture = createServerFn({ method: "GET" }).validator((input: { query: string }) => input).handler(async ({ data }): Promise<ResearchResult> => performFixtureResearchInternal(data.query));
