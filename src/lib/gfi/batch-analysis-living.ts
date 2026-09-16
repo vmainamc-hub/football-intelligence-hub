@@ -3,7 +3,7 @@ import { loadFreeFixtures, type FreeLeague, type MatchRow } from "./intelligence
 import { canonicalCompetitionName, canonicalTeamKey } from "./identity";
 import { mineLivingReservoir } from "./living-reservoir";
 import {
-  runBatchAnalysis as runBaseBatchAnalysis,
+  runBatchAnalysisInternal,
   type BatchAnalysisResponse,
 } from "./batch-analysis";
 
@@ -74,7 +74,7 @@ export const runLivingBatchAnalysis = createServerFn({ method: "POST" })
       requestedNumber > 0 && !/\b\d{1,2}\b/.test(requestedText)
         ? `${requestedText} ${overScan}`
         : requestedText.replace(/\b(\d{1,2})\b/, String(overScan));
-    const base = await runBaseBatchAnalysis({ data: { ...data, request: baseRequest } });
+    const base = await runBatchAnalysisInternal({ ...data, request: baseRequest });
     const clean = dedupeSelections(base);
     const finalSelections = clean.selections.slice(0, requestedNumber);
     return {

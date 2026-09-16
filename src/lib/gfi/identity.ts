@@ -33,9 +33,23 @@ export function isCompletedMatch(match: {
 const TEAM_NOISE =
   /\b(fc|afc|cf|sc|ac|as|ss|ssc|cd|ud|sd|rc|rcd|club|clube|calcio|football|futbol|futebol|sporting clube|sporting club|deportivo|association)\b/g;
 
+export function sanitizeTeamName(value: string): string {
+  if (!value) return "";
+  let s = value.trim();
+  // Strip score/minute/ranking numeric prefixes like "00 ", "45 ", "01 ", "1. ", "0-0 ", "12:30 "
+  s = s.replace(/^\s*\d{1,3}\s*[-–.:]?\s+/i, "");
+  s = s.replace(/^\s*\d{1,2}:\d{2}\s+/i, "");
+  // Strip bracketed numbers like "[1] ", "(12) "
+  s = s.replace(/^\s*[\[(]\d+[\])]\s*/i, "");
+  // Strip trailing noise like " - 1st", " (R)", etc.
+  s = s.replace(/\s+-\s+\d+.*$/, "");
+  return s.trim() || value.trim();
+}
+
 /** Normalized comparison key: "Real Madrid CF" and "Real Madrid" collapse to one identity. */
 export function canonicalTeamKey(value: string): string {
-  return value
+  const sanitized = sanitizeTeamName(value);
+  const normalized = sanitized
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
@@ -44,6 +58,11 @@ export function canonicalTeamKey(value: string): string {
     .replace(TEAM_NOISE, " ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+  const alias = TEAM_ALIASES[normalized];
+  if (alias) {
+    return alias.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  }
+  return normalized;
 }
 
 const TEAM_ALIASES: Record<string, string> = {
@@ -58,6 +77,8 @@ const TEAM_ALIASES: Record<string, string> = {
   "ath madrid": "Atletico Madrid",
   "atletico madrid": "Atletico Madrid",
   "ath bilbao": "Athletic Bilbao",
+  "athletic bilbao": "Athletic Bilbao",
+  "athletic club": "Athletic Bilbao",
   athletic: "Athletic Bilbao",
   inter: "Inter",
   internazionale: "Inter",
@@ -131,15 +152,16 @@ const TEAM_ALIASES: Record<string, string> = {
 
 /** Human-facing canonical team name, so one club is never stored twice. */
 export function canonicalTeamName(value: string): string {
-  const key = canonicalTeamKey(value);
+  const sanitized = sanitizeTeamName(value);
+  const key = canonicalTeamKey(sanitized);
   if (TEAM_ALIASES[key]) return TEAM_ALIASES[key];
-  const cleaned = value
+  const cleaned = sanitized
     .replace(/\b(FC|AFC|CF|SC|SSC)\b/gi, "")
     .trim()
     .replace(/\s+/g, " ");
   const cleanedKey = canonicalTeamKey(cleaned);
   if (TEAM_ALIASES[cleanedKey]) return TEAM_ALIASES[cleanedKey];
-  return cleaned || value.trim().replace(/\s+/g, " ");
+  return cleaned || sanitized || value.trim().replace(/\s+/g, " ");
 }
 
 export function sameTeamIdentity(a: string, b: string): boolean {

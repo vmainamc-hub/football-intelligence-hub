@@ -222,6 +222,8 @@ export async function loadFreeFixtures(): Promise<FreeLeague[]> {
   return loadFreeFixturesInternal();
 }
 
+let cachedLoadedGroups: FreeLeague[] = [];
+
 async function loadFreeFixturesInternal(): Promise<FreeLeague[]> {
   const season = currentSeasonCode(),
     entries = Object.entries(LEAGUES);
@@ -241,7 +243,23 @@ async function loadFreeFixturesInternal(): Promise<FreeLeague[]> {
     }),
   );
   let loaded = settled.flatMap((x) => (x.status === "fulfilled" ? [x.value] : []));
-  if (!loaded.length) throw new Error(`FREE football data feed unavailable for season ${season}.`);
+  if (!loaded.length && cachedLoadedGroups.length > 0) {
+    loaded = cachedLoadedGroups.map((g) => ({ ...g, matches: [...g.matches] }));
+  }
+  if (!loaded.length) {
+    // If external CSV backbone is temporarily unreachable, instantiate placeholder league groups
+    // so global discovery and universal sources can still attach and not crash the pipeline
+    loaded = entries.map(([code, league]) => ({
+      league,
+      code,
+      season,
+      matches: [],
+      sourceUrl: "fallback-structure",
+      fetchedAt: new Date().toISOString(),
+    }));
+  } else {
+    cachedLoadedGroups = loaded;
+  }
   const today = kenyaDateKey();
   let externalFound = 0;
   try {

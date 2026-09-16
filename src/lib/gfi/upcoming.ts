@@ -7,13 +7,13 @@ export type UpcomingDay = {
   matches: (MatchRow & { league: string; code: string; season: string })[];
 };
 
-function todayKenya() {
+function todayKenya(reference = new Date()) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Africa/Nairobi",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(new Date());
+  }).format(reference);
 }
 
 function addDaysKey(key: string, days: number) {
@@ -83,10 +83,11 @@ export function getUpcomingFixturesByDay(
   all: FreeLeague[],
   days = 7,
   perDayLimit = 80,
+  referenceDate = new Date(),
 ): UpcomingDay[] {
-  const today = todayKenya();
+  const today = todayKenya(referenceDate);
   const end = addDaysKey(today, Math.max(0, days - 1));
-  const now = Date.now();
+  const now = referenceDate.getTime();
   const byDate = new Map<string, (MatchRow & { league: string; code: string; season: string })[]>();
 
   for (const group of all) {

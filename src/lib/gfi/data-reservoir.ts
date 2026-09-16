@@ -294,88 +294,95 @@ export const reservoirStats = createServerFn({ method: "GET" }).handler(
   },
 );
 
+export async function queryReservoirInternal(
+  rawQuery: string,
+  limit = 200,
+): Promise<ReservoirMatch[]> {
+  const db = readClient() ?? adminClient();
+  const query = rawQuery.trim();
+  if (!db || !query) return [];
+  const needle = canonicalName(query);
+  const { data: teams } = await db
+    .from("teams")
+    .select("id,name")
+    .ilike("name", `%${query}%`)
+    .limit(20);
+  const aliases = await db
+    .from("team_aliases")
+    .select("team_id,alias")
+    .ilike("normalized_alias", `%${needle}%`)
+    .limit(20);
+  const teamIds = [
+    ...new Set([
+      ...(teams ?? []).map((t) => t.id),
+      ...(aliases.data ?? []).map((a) => a.team_id),
+    ]),
+  ];
+  if (!teamIds.length) return [];
+  const clauses = teamIds
+    .flatMap((id) => [`home_team_id.eq.${id}`, `away_team_id.eq.${id}`])
+    .join(",");
+  const { data: matches, error } = await db
+    .from("matches")
+    .select("id,competition_id,home_team_id,away_team_id,kickoff,status,ft_home,ft_away,source")
+    .or(clauses)
+    .order("kickoff", { ascending: false })
+    .limit(Math.max(20, Math.min(limit, 1000)));
+  if (error || !matches?.length) return [];
+  const teamLookup = new Map<string, string>((teams ?? []).map((t) => [t.id, t.name]));
+  const missingTeamIds = [
+    ...new Set(
+      matches
+        .flatMap((m) => [m.home_team_id, m.away_team_id])
+        .filter((id) => !teamLookup.has(id)),
+    ),
+  ];
+  if (missingTeamIds.length) {
+    const extra = await db.from("teams").select("id,name").in("id", missingTeamIds);
+    for (const t of extra.data ?? []) teamLookup.set(t.id, t.name);
+  }
+  const competitionIds = [...new Set(matches.map((m) => m.competition_id))];
+  const competitions = await db
+    .from("competitions")
+    .select("id,name,code,season")
+    .in("id", competitionIds);
+  const competitionLookup = new Map((competitions.data ?? []).map((c) => [c.id, c]));
+  return matches.map((m) => {
+    const competition = competitionLookup.get(m.competition_id);
+    const kickoffDate = String(m.kickoff).slice(0, 10);
+    const kickoffTime = String(m.kickoff).slice(11, 16);
+    const hg = typeof m.ft_home === "number" ? m.ft_home : undefined;
+    const ag = typeof m.ft_away === "number" ? m.ft_away : undefined;
+    return {
+      reservoirId: m.id,
+      date: kickoffDate,
+      time: kickoffTime,
+      home: teamLookup.get(m.home_team_id) ?? "Unknown",
+      away: teamLookup.get(m.away_team_id) ?? "Unknown",
+      hg,
+      ag,
+      result:
+        hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
+      league: competition?.name ?? "Worldwide Football",
+      competition: competition?.name,
+      competitionCode: competition?.code,
+      code: competition?.code,
+      season: competition?.season,
+      source: m.source,
+    } satisfies ReservoirMatch;
+  });
+}
+
 export const searchReservoir = createServerFn({ method: "GET" })
   .validator((input: { query: string; limit?: number }) => input)
   .handler(async ({ data }): Promise<ReservoirMatch[]> => {
-    const db = readClient() ?? adminClient();
-    const query = data.query.trim();
-    if (!db || !query) return [];
-    const needle = canonicalName(query);
-    const { data: teams } = await db
-      .from("teams")
-      .select("id,name")
-      .ilike("name", `%${query}%`)
-      .limit(20);
-    const aliases = await db
-      .from("team_aliases")
-      .select("team_id,alias")
-      .ilike("normalized_alias", `%${needle}%`)
-      .limit(20);
-    const teamIds = [
-      ...new Set([
-        ...(teams ?? []).map((t) => t.id),
-        ...(aliases.data ?? []).map((a) => a.team_id),
-      ]),
-    ];
-    if (!teamIds.length) return [];
-    const clauses = teamIds
-      .flatMap((id) => [`home_team_id.eq.${id}`, `away_team_id.eq.${id}`])
-      .join(",");
-    const { data: matches, error } = await db
-      .from("matches")
-      .select("id,competition_id,home_team_id,away_team_id,kickoff,status,ft_home,ft_away,source")
-      .or(clauses)
-      .order("kickoff", { ascending: false })
-      .limit(Math.max(20, Math.min(data.limit ?? 200, 1000)));
-    if (error || !matches?.length) return [];
-    const teamLookup = new Map<string, string>((teams ?? []).map((t) => [t.id, t.name]));
-    const missingTeamIds = [
-      ...new Set(
-        matches
-          .flatMap((m) => [m.home_team_id, m.away_team_id])
-          .filter((id) => !teamLookup.has(id)),
-      ),
-    ];
-    if (missingTeamIds.length) {
-      const extra = await db.from("teams").select("id,name").in("id", missingTeamIds);
-      for (const t of extra.data ?? []) teamLookup.set(t.id, t.name);
-    }
-    const competitionIds = [...new Set(matches.map((m) => m.competition_id))];
-    const competitions = await db
-      .from("competitions")
-      .select("id,name,code,season")
-      .in("id", competitionIds);
-    const competitionLookup = new Map((competitions.data ?? []).map((c) => [c.id, c]));
-    return matches.map((m) => {
-      const competition = competitionLookup.get(m.competition_id);
-      const kickoffDate = String(m.kickoff).slice(0, 10);
-      const kickoffTime = String(m.kickoff).slice(11, 16);
-      const hg = typeof m.ft_home === "number" ? m.ft_home : undefined;
-      const ag = typeof m.ft_away === "number" ? m.ft_away : undefined;
-      return {
-        reservoirId: m.id,
-        date: kickoffDate,
-        time: kickoffTime,
-        home: teamLookup.get(m.home_team_id) ?? "Unknown",
-        away: teamLookup.get(m.away_team_id) ?? "Unknown",
-        hg,
-        ag,
-        result:
-          hg !== undefined && ag !== undefined ? (hg > ag ? "H" : hg < ag ? "A" : "D") : undefined,
-        league: competition?.name ?? "Worldwide Football",
-        competition: competition?.name,
-        competitionCode: competition?.code,
-        code: competition?.code,
-        season: competition?.season,
-        source: m.source,
-      } satisfies ReservoirMatch;
-    });
+    return queryReservoirInternal(data.query, data.limit);
   });
 
 export async function reservoirHistoricalContext(home: string, away: string, limit = 240) {
   const [homeRows, awayRows] = await Promise.all([
-    searchReservoir({ data: { query: home, limit } }),
-    searchReservoir({ data: { query: away, limit } }),
+    queryReservoirInternal(home, limit),
+    queryReservoirInternal(away, limit),
   ]);
   const merged = new Map<string, ReservoirMatch>();
   for (const row of [...homeRows, ...awayRows])

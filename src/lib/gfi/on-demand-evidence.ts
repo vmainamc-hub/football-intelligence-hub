@@ -46,7 +46,18 @@ export async function requestFixtureMining(fixture: MatchRow) {
       },
       { onConflict: "match_key" },
     );
-    return await runDeepEvidenceMining({ matchBudget: 1, teamBudget: 2 });
+    return await Promise.race([
+      runDeepEvidenceMining({ matchBudget: 1, teamBudget: 0 }),
+      new Promise<{ configured: boolean; processedMatches: number; processedTeams: number; evidence: number }>(
+        (resolve) => {
+          const t = setTimeout(
+            () => resolve({ configured: true, processedMatches: 0, processedTeams: 0, evidence: 0 }),
+            8_000,
+          );
+          t.unref?.();
+        },
+      ),
+    ]);
   } catch {
     return { configured: false, processedMatches: 0, processedTeams: 0, evidence: 0 };
   }

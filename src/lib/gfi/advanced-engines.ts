@@ -1,4 +1,5 @@
 import type { MatchRow } from "./intelligence";
+import { canonicalTeamKey } from "./identity";
 
 export type AdvancedEngine = {
   id: string;
@@ -15,13 +16,7 @@ export type AdvancedEngine = {
 
 const clamp = (n: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, n));
 const avg = (x: number[]) => (x.length ? x.reduce((a, b) => a + b, 0) / x.length : 0);
-const key = (s: string) =>
-  s
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\b(fc|afc|cf|sc|club|football|ac|cd|ud|rcd|as|us)\b/g, " ")
-    .replace(/[^a-z0-9]/g, "");
+const key = (s: string) => canonicalTeamKey(s);
 const dated = (f: MatchRow, r: MatchRow[]) =>
   r
     .filter(

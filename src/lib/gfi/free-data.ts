@@ -10,6 +10,9 @@ export type FreeDataFetchResult = {
 
 const BASE_URL = "https://www.football-data.co.uk/mmz4281";
 const REQUEST_TIMEOUT_MS = 12_000;
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+const memoryCache = new Map<string, { data: FreeDataFetchResult; timestamp: number }>();
 
 function validSeason(value: string): boolean {
   return /^\d{4}$/.test(value);
@@ -19,17 +22,7 @@ function validCode(value: string): boolean {
   return /^[A-Z0-9]{2,4}$/.test(value);
 }
 
-export async function getFreeLeagueCsv(
-  codeParam: string,
-  seasonParam: string,
-): Promise<FreeDataFetchResult> {
-  const code = codeParam.toUpperCase();
-  const season = seasonParam;
-
-  if (!validCode(code) || !validSeason(season)) {
-    throw new Error("Invalid free football data request");
-  }
-
+async function fetchSingleCsv(code: string, season: string): Promise<FreeDataFetchResult> {
   const sourceUrl = `${BASE_URL}/${season}/${code}.csv`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -61,6 +54,47 @@ export async function getFreeLeagueCsv(
     };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+export async function getFreeLeagueCsv(
+  codeParam: string,
+  seasonParam: string,
+): Promise<FreeDataFetchResult> {
+  const code = codeParam.toUpperCase();
+  const season = seasonParam;
+
+  if (!validCode(code) || !validSeason(season)) {
+    throw new Error("Invalid free football data request");
+  }
+
+  const cacheKey = `${code}-${season}`;
+  const cached = memoryCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  try {
+    const result = await fetchSingleCsv(code, season);
+    memoryCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
+  } catch (primaryErr) {
+    // If we have any cached version (even stale), use it as fallback
+    if (cached) {
+      return cached.data;
+    }
+    // Try previous seasons if the current season is not yet published or unreachable
+    const fallbackSeasons = ["2526", "2425", "2324"].filter((s) => s !== season);
+    for (const altSeason of fallbackSeasons) {
+      try {
+        const altResult = await fetchSingleCsv(code, altSeason);
+        memoryCache.set(cacheKey, { data: altResult, timestamp: Date.now() });
+        return altResult;
+      } catch {
+        // try next fallback
+      }
+    }
+    throw primaryErr;
   }
 }
 

@@ -316,73 +316,85 @@ function targetCandidates(fixtures: ReturnType<typeof uniqueFixtures>, intent: B
   });
 }
 
+export type BatchAnalysisInput = {
+  request?: string;
+  limit?: number;
+  includeUpcoming?: boolean;
+};
+
+export async function runBatchAnalysisInternal(
+  data: BatchAnalysisInput,
+): Promise<BatchAnalysisResponse> {
+  const request = (
+    data.request ??
+    (data.limit ? `Give me ${data.limit} safest picks` : "Predict today's next matches")
+  ).trim();
+  const intent = parseIntent(request);
+  const groups = await loadFreeFixtures();
+  const allCandidates = targetCandidates(uniqueFixtures(groups), intent);
+  const analysisBudget = Math.min(360, Math.max(160, intent.count * 12));
+  const pool = diversifyCandidates(allCandidates, analysisBudget);
+
+  const analysed = await mapConcurrent(pool, 8, async (fixture) => {
+    const analysis = analyzeLoadedFixture(fixture, fixture.code, groups);
+    const signal = chooseMarket(analysis, intent);
+    if (!signal) return undefined;
+    const gate = qualifyMarket(analysis, signal);
+    const status: BatchSelection["status"] = gate.qualified
+      ? "QUALIFIED"
+      : gate.watch
+        ? "WATCH"
+        : "NO QUALIFIED MARKET";
+    return {
+      fixture,
+      analysis,
+      market: signal,
+      score: selectionScore(analysis, signal, intent.mode),
+      status,
+      reason: gate.reason,
+    } satisfies BatchSelection;
+  });
+
+  const qualified = analysed
+    .filter((row) => row.status === "QUALIFIED")
+    .sort((a, b) => b.score - a.score);
+  const selected: BatchSelection[] = [];
+  const usedFixtures = new Set<string>();
+  for (const row of qualified) {
+    const id = fixtureId(row.fixture);
+    if (usedFixtures.has(id)) continue;
+    usedFixtures.add(id);
+    selected.push(row);
+    if (selected.length >= intent.count) break;
+  }
+
+  const generatedAt = new Date().toISOString();
+  const message =
+    selected.length >= intent.count
+      ? `${selected.length} qualified selections returned after scanning a diversified ${analysed.length}-match analysis set.`
+      : `${intent.count} requested. ${selected.length} currently meet the qualification criteria after analysing ${analysed.length} of ${allCandidates.length} available candidates.`;
+
+  return {
+    request,
+    intent,
+    requested: intent.count,
+    candidatePool: allCandidates.length,
+    analysisBudget: pool.length,
+    analysed: analysed.length,
+    qualified: qualified.length,
+    returned: selected.length,
+    selections: selected,
+    generatedAt,
+    message,
+  };
+}
+
 export const runBatchAnalysis = createServerFn({ method: "POST" })
   .inputValidator(
-    (input: unknown) => input as { request?: string; limit?: number; includeUpcoming?: boolean },
+    (input: unknown) => input as BatchAnalysisInput,
   )
   .handler(async ({ data }): Promise<BatchAnalysisResponse> => {
-    const request = (
-      data.request ??
-      (data.limit ? `Give me ${data.limit} safest picks` : "Predict today's next matches")
-    ).trim();
-    const intent = parseIntent(request);
-    const groups = await loadFreeFixtures();
-    const allCandidates = targetCandidates(uniqueFixtures(groups), intent);
-    const analysisBudget = Math.min(360, Math.max(160, intent.count * 12));
-    const pool = diversifyCandidates(allCandidates, analysisBudget);
-
-    const analysed = await mapConcurrent(pool, 8, async (fixture) => {
-      const analysis = analyzeLoadedFixture(fixture, fixture.code, groups);
-      const signal = chooseMarket(analysis, intent);
-      if (!signal) return undefined;
-      const gate = qualifyMarket(analysis, signal);
-      const status: BatchSelection["status"] = gate.qualified
-        ? "QUALIFIED"
-        : gate.watch
-          ? "WATCH"
-          : "NO QUALIFIED MARKET";
-      return {
-        fixture,
-        analysis,
-        market: signal,
-        score: selectionScore(analysis, signal, intent.mode),
-        status,
-        reason: gate.reason,
-      } satisfies BatchSelection;
-    });
-
-    const qualified = analysed
-      .filter((row) => row.status === "QUALIFIED")
-      .sort((a, b) => b.score - a.score);
-    const selected: BatchSelection[] = [];
-    const usedFixtures = new Set<string>();
-    for (const row of qualified) {
-      const id = fixtureId(row.fixture);
-      if (usedFixtures.has(id)) continue;
-      usedFixtures.add(id);
-      selected.push(row);
-      if (selected.length >= intent.count) break;
-    }
-
-    const generatedAt = new Date().toISOString();
-    const message =
-      selected.length >= intent.count
-        ? `${selected.length} qualified selections returned after scanning a diversified ${analysed.length}-match analysis set.`
-        : `${intent.count} requested. ${selected.length} currently meet the qualification criteria after analysing ${analysed.length} of ${allCandidates.length} available candidates.`;
-
-    return {
-      request,
-      intent,
-      requested: intent.count,
-      candidatePool: allCandidates.length,
-      analysisBudget: pool.length,
-      analysed: analysed.length,
-      qualified: qualified.length,
-      returned: selected.length,
-      selections: selected,
-      generatedAt,
-      message,
-    };
+    return runBatchAnalysisInternal(data);
   });
 
 export { parseIntent };

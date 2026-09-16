@@ -33,6 +33,8 @@ test("Timezone Handling: Tuesday 23:00 UTC match converts to Wednesday 02:00 EAT
       },
     ],
     7,
+    80,
+    new Date("2026-09-15T12:00:00Z"),
   );
 
   // The match must appear on 2026-09-16 (Wednesday), NOT 2026-09-15 (Tuesday)

@@ -1,11 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { canonicalTeamKey, canonicalTeamName, canonicalCompetitionName } from "./identity";
-import { searchReservoir, type ReservoirMatch } from "./data-reservoir";
+import { queryReservoirInternal, type ReservoirMatch } from "./data-reservoir";
 import { researchTeamOrFixture } from "./research-orchestrator";
 import { getGlobalFallbackFixtures, fetchGlobalFallbackFixtures } from "./fixture-sources";
 import { fetchEspnFixtures } from "./espn-sources";
-import { searchUniversalFixtures } from "./universal-sources";
+import { queryUniversalFixtures } from "./universal-sources";
 import type { MatchRow } from "./intelligence";
 
 function env(name: string) {
@@ -182,7 +182,7 @@ async function collectDeepPublicEvidence(home: string, away: string, fixtureDate
   const yearAgo = addDays(fixtureDate, -365);
   const [global, universal, espn] = await Promise.all([
     safeRows(getGlobalFallbackFixtures(yearAgo, to)),
-    safeRows(searchUniversalFixtures({ data: { query: `${home} vs ${away}` } })),
+    safeRows(queryUniversalFixtures(`${home} vs ${away}`)),
     safeRows(fetchEspnFixtures(from, to)),
   ]);
   const relevant = uniqueRows(
@@ -209,8 +209,8 @@ async function mineMatch(db: SupabaseClient, fixture: MatchRow) {
   const away = canonicalTeamName(fixture.away);
   const matchKey = key({ ...fixture, home, away });
   const [homeHistory, awayHistory, research, publicEvidence] = await Promise.all([
-    searchReservoir({ data: { query: home, limit: 1000 } }).catch(() => []),
-    searchReservoir({ data: { query: away, limit: 1000 } }).catch(() => []),
+    queryReservoirInternal(home, 1000).catch(() => []),
+    queryReservoirInternal(away, 1000).catch(() => []),
     researchTeamOrFixture(`${home} vs ${away} ${dateKey(fixture.date)}`).catch(() => undefined),
     collectDeepPublicEvidence(home, away, dateKey(fixture.date)),
   ]);
@@ -322,7 +322,7 @@ async function mineMatch(db: SupabaseClient, fixture: MatchRow) {
 async function mineTeam(db: SupabaseClient, teamName: string) {
   const name = canonicalTeamName(teamName);
   const teamKey = canonicalTeamKey(name);
-  const history = await searchReservoir({ data: { query: name, limit: 1000 } }).catch(() => []);
+  const history = await queryReservoirInternal(name, 1000).catch(() => []);
   const all = aggregate(name, history);
   const home = aggregate(name, history, "HOME");
   const away = aggregate(name, history, "AWAY");
