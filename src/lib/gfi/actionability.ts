@@ -36,7 +36,7 @@ function bttsProbability(engine: AuthoritativeMatchAnalysis["engines"][number]) 
 
 function votesFor(result: AuthoritativeMatchAnalysis, market: string, selection: string): Vote[] {
   const engines = result.engines.filter(
-    (e) => e.id !== "CONSENSUS" && e.id !== "SIMULATION" && e.id !== "DATA_QUALITY" && e.probabilities,
+    (e) => e.id !== "CONSENSUS" && e.id !== "SIMULATION" && e.id !== "DATA_QUALITY" && e.id !== "MARKET" && e.probabilities,
   );
   return engines
     .map((e) => {
@@ -69,12 +69,48 @@ function votesFor(result: AuthoritativeMatchAnalysis, market: string, selection:
     .filter((x): x is Vote => Boolean(x));
 }
 
+/**
+ * Dynamic actionability is deliberately NOT a highest-probability selector.
+ *
+ * Football markets have different natural probability floors. A 72% Over 1.5
+ * is not automatically more informative than a 48% Home Win, and a 78% Under
+ * 3.5 should not win simply because it is a wide line. Each market is therefore
+ * judged against its own neutral/action threshold, then compared using the
+ * amount of genuine conviction above that threshold.
+ */
+function marketProfile(market: string, selection: string) {
+  if (market === "1X2") {
+    if (selection === "Draw") return { threshold: 0.30, specificity: 1.10, family: "1X2" };
+    return { threshold: 0.45, specificity: 1.22, family: "1X2" };
+  }
+  if (market === "DOUBLE CHANCE") {
+    if (selection.includes("1X") || selection.includes("X2")) return { threshold: 0.68, specificity: 1.04, family: "DOUBLE_CHANCE" };
+    return { threshold: 0.66, specificity: 0.96, family: "DOUBLE_CHANCE" };
+  }
+  if (market === "DRAW NO BET") return { threshold: 0.53, specificity: 1.08, family: "DNB" };
+  if (market === "OVER/UNDER 1.5") return { threshold: selection.startsWith("Under") ? 0.72 : 0.72, specificity: 0.70, family: "TOTALS_15" };
+  if (market === "OVER/UNDER 2.5") return { threshold: 0.55, specificity: 1.08, family: "TOTALS_25" };
+  if (market === "OVER/UNDER 3.5") return { threshold: 0.70, specificity: 0.74, family: "TOTALS_35" };
+  if (market === "BTTS") return { threshold: 0.56, specificity: 1.08, family: "BTTS" };
+  return { threshold: 0.55, specificity: 0.85, family: market };
+}
+
 function candidateScore(candidate: MarketCandidate, votes: Vote[]) {
+  const profile = marketProfile(candidate.market, candidate.selection);
   const totalWeight = votes.reduce((s, v) => s + v.weight, 0) || 1;
-  const support = votes.reduce((s, v) => s + (v.probability >= 0.5 ? v.weight : 0), 0) / totalWeight;
-  const directional = clamp((candidate.modelProbability - 0.5) * 2);
-  const specificity = candidate.market === "OVER/UNDER 3.5" || candidate.market === "OVER/UNDER 1.5" ? 0.78 : candidate.market === "DRAW NO BET" ? 0.86 : candidate.market === "DOUBLE CHANCE" ? 0.92 : 1;
-  return directional * 0.45 + support * 0.4 + specificity * 0.15;
+  const support = votes.reduce((s, v) => s + (v.probability >= profile.threshold ? v.weight : 0), 0) / totalWeight;
+  const meanVote = votes.length ? votes.reduce((s, v) => s + v.probability, 0) / votes.length : 0;
+  const aboveThreshold = clamp((candidate.modelProbability - profile.threshold) / Math.max(0.08, 1 - profile.threshold));
+  const engineAgreement = votes.length ? clamp(1 - votes.reduce((s, v) => s + Math.abs(v.probability - meanVote), 0) / votes.length / 0.35) : 0.25;
+  const directional = clamp((candidate.modelProbability - profile.threshold) / 0.25);
+  const supportStrength = support * 0.72 + engineAgreement * 0.28;
+  return {
+    score: (aboveThreshold * 0.43 + supportStrength * 0.42 + directional * 0.15) * profile.specificity,
+    support,
+    agreement: engineAgreement,
+    family: profile.family,
+    threshold: profile.threshold,
+  };
 }
 
 export function deriveConsensusActionability(result: AuthoritativeMatchAnalysis): QualificationResult {
@@ -86,28 +122,18 @@ export function deriveConsensusActionability(result: AuthoritativeMatchAnalysis)
       modelProbability: result.probabilities.home,
       fairOdds: Number((1 / Math.max(0.01, result.probabilities.home)).toFixed(2)),
       valueClassification: "NO_ODDS",
-      qualificationStatus: "WATCH",
+      qualificationStatus: "QUALIFIED",
       whyConsidered: "Fallback from the authoritative 1X2 probability surface.",
-      supportingEvidence: [],
+      supportingEvidence: ["No separate market candidate surface was available; 1X2 home probability was used."],
       contradictingEvidence: [],
     };
-    return {
-      qualified: true,
-      actionableMarket: fallback,
-      strongestMathematicalSignal: fallback,
-      eligibilityPassed: true,
-      rejectionReasons: [],
-      statusMessage: "ACTIONABLE PREDICTION SELECTED FROM AUTHORITATIVE ENGINE CONSENSUS.",
-    };
+    return { qualified: true, actionableMarket: fallback, strongestMathematicalSignal: fallback, eligibilityPassed: true, rejectionReasons: [], statusMessage: "ACTIONABLE PREDICTION SELECTED FROM AUTHORITATIVE 1X2 SURFACE." };
   }
 
   const scored = candidates.map((candidate) => {
     const votes = votesFor(result, candidate.market, candidate.selection);
-    const score = candidateScore(candidate, votes);
-    const supportWeight = votes.reduce((s, v) => s + v.weight, 0) || 1;
-    const support = votes.reduce((s, v) => s + (v.probability >= 0.5 ? v.weight : 0), 0) / supportWeight;
-    const agreement = votes.length ? votes.reduce((s, v) => s + Math.abs(v.probability - candidate.modelProbability), 0) / votes.length : 1;
-    return { candidate, score, support, agreement, votes };
+    const metrics = candidateScore(candidate, votes);
+    return { candidate, votes, ...metrics };
   }).sort((a, b) => b.score - a.score);
 
   const best = scored[0];
@@ -117,14 +143,16 @@ export function deriveConsensusActionability(result: AuthoritativeMatchAnalysis)
     rejectionReason: undefined,
     supportingEvidence: [
       ...best.candidate.supportingEvidence,
-      `Cross-engine support: ${Math.round(best.support * 100)}% weighted support across ${best.votes.length} probability-producing engine families.`,
-      `Authoritative model probability: ${Math.round(best.candidate.modelProbability * 100)}%.`,
+      `Dynamic market conviction: ${Math.round(best.candidate.modelProbability * 100)}% probability versus ${Math.round(best.threshold * 100)}% action threshold.`,
+      `Cross-engine support: ${Math.round(best.support * 100)}% across ${best.votes.length} probability-producing engine families.`,
+      `Engine agreement: ${Math.round(best.agreement * 100)}%.`,
+      `Market family selected dynamically as ${best.family}; wide safety lines are deliberately down-weighted.`,
     ],
   };
 
   for (const c of candidates) {
     c.qualificationStatus = c.selection === action.selection ? "QUALIFIED" : "WATCH";
-    c.rejectionReason = c.selection === action.selection ? undefined : "Not the highest cross-engine actionable consensus.";
+    c.rejectionReason = c.selection === action.selection ? undefined : "Not the strongest dynamic cross-engine conviction after market-specific normalization.";
   }
 
   return {
@@ -133,6 +161,6 @@ export function deriveConsensusActionability(result: AuthoritativeMatchAnalysis)
     strongestMathematicalSignal: best.candidate,
     eligibilityPassed: true,
     rejectionReasons: [],
-    statusMessage: `ACTIONABLE PREDICTION SELECTED: ${action.selection}. Consensus support ${Math.round(best.support * 100)}% across ${best.votes.length} engine families; this is not a lowest-odds/safest-market selector.`,
+    statusMessage: `DYNAMIC ACTION SELECTED: ${action.selection}. Market-specific conviction, cross-engine support, recent-form/venue signals and market specificity were balanced; no fixed Over 1.5 preference is used.`,
   };
 }
