@@ -50,10 +50,10 @@ export async function runMatchAnalysis(
   fixture: MatchRow,
   preloadedGroups?: FreeLeague[],
 ): Promise<ServerMatchAnalysis> {
-  // Batch analysis supplies the already-loaded fixture universe so the full
-  // single-match intelligence path does not reload the same global fixture
-  // dataset once per fixture. The research/living/evidence stages below remain
-  // identical for single and batch analysis.
+  // Batch supplies the already-loaded fixture universe so the single-match
+  // intelligence path can be reused without reloading the global fixture set.
+  // Research, living-reservoir warming, on-demand mining, persistence reload,
+  // authoritative modelling, ARRM, and actionability remain the same path.
   const groups = preloadedGroups ?? (await loadFreeFixtures());
   const [research, initialLiving] = await Promise.all([
     researchTeamOrFixture(`${fixture.home} vs ${fixture.away} ${fixture.date}`).catch((err) => {
@@ -75,7 +75,6 @@ export async function runMatchAnalysis(
       h2hRows: [],
       homeTeamRows: [],
       awayTeamRows: [],
-      h2hRows: [],
       publicRows: [],
       sourceFamilies: [],
       sourceFamilyCounts: {},
@@ -130,10 +129,6 @@ export async function runMatchAnalysis(
   );
   analysis.pipeline.competitionsLoaded = expandedGroups.length;
 
-  // Actionability is downstream of the single authoritative engine. It never
-  // creates a second prediction model: it audits the market candidates against
-  // the probability-producing engine families and selects the strongest
-  // cross-engine-supported market rather than the lowest-odds/safest line.
   const actionable = deriveConsensusActionability(analysis);
   analysis.qualification = actionable;
   analysis.finalPrediction = actionable.actionableMarket?.selection ?? analysis.finalPrediction;
