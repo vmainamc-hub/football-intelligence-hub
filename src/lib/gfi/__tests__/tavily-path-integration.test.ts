@@ -48,8 +48,11 @@ test("Tavily Data Path Integration: Mock Tavily response -> structured football 
       );
     }
 
-    // Pass through any other calls (e.g. data reservoirs, etc.) to origFetch
-    return origFetch(url, init);
+    // Return empty json for non-tavily calls to avoid slow external network timeouts
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }) as typeof fetch;
 
   try {
@@ -66,7 +69,7 @@ test("Tavily Data Path Integration: Mock Tavily response -> structured football 
     };
 
     // Run the complete production match-analysis pipeline
-    const analysis = await runMatchAnalysis(sparseFixture.code!, sparseFixture);
+    const analysis = await runMatchAnalysis(sparseFixture.code!, sparseFixture, []);
 
     // 1. Verify structured facts and dated score extraction
     assert.ok(analysis.aiReasoningPacket, "aiReasoningPacket must exist");
@@ -159,7 +162,10 @@ test("Tavily Data Path Integration: Graceful continuation when Tavily fails or r
     if (urlStr.includes("api.tavily.com")) {
       return new Response("Service Unavailable", { status: 503 });
     }
-    return origFetch(url, init);
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }) as typeof fetch;
 
   try {
@@ -176,7 +182,7 @@ test("Tavily Data Path Integration: Graceful continuation when Tavily fails or r
     };
 
     // The entire pipeline must complete successfully without crashing
-    const analysis = await runMatchAnalysis(sparseFixture.code!, sparseFixture);
+    const analysis = await runMatchAnalysis(sparseFixture.code!, sparseFixture, []);
 
     assert.ok(analysis, "Analysis must resolve even if Tavily errors");
     assert.ok(analysis.probabilities, "Probabilities must still be computed via priors");

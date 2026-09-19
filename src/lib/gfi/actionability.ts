@@ -1,4 +1,5 @@
 import type { AuthoritativeMatchAnalysis, MarketCandidate, QualificationResult } from "./authoritative";
+import { isCoreActionableMarket } from "./markets";
 
 type Vote = { probability: number; weight: number; engine: string };
 
@@ -126,7 +127,12 @@ function votesFor(result: AuthoritativeMatchAnalysis, market: string, selection:
 
 /**
  * Market statistical baselines and conviction thresholds.
- * Every market specificity is normalized to 1.0 — no market receives an artificial category boost.
+ * Strictly configured for the 5 authoritative core markets:
+ * 1. Home Win
+ * 2. Draw
+ * 3. Away Win
+ * 4. GG / BTTS Yes
+ * 5. Over 2.5 Goals
  */
 function marketProfile(market: string, selection: string) {
   if (market === "1X2") {
@@ -135,31 +141,22 @@ function marketProfile(market: string, selection: string) {
     }
     return { baseline: 0.40, threshold: 0.45, family: "1X2", specificity: 1.0 };
   }
-  if (market === "DOUBLE CHANCE") {
-    return { baseline: 0.67, threshold: 0.68, family: "DOUBLE_CHANCE", specificity: 1.0 };
-  }
-  if (market === "DRAW NO BET") {
-    return { baseline: 0.50, threshold: 0.54, family: "DNB", specificity: 1.0 };
-  }
-  if (market === "OVER/UNDER 1.5") {
-    if (selection.startsWith("Under")) {
-      return { baseline: 0.26, threshold: 0.34, family: "TOTALS_15", specificity: 1.0 };
+  if (market === "OVER/UNDER 2.5" || market === "OVER 2.5") {
+    // Only Over 2.5 is a core market; Under 2.5 is rejected
+    if (selection.toLowerCase().includes("under")) {
+      return { baseline: 1.0, threshold: 1.0, family: "EXCLUDED", specificity: 0 };
     }
-    return { baseline: 0.74, threshold: 0.76, family: "TOTALS_15", specificity: 1.0 };
-  }
-  if (market === "OVER/UNDER 2.5") {
     return { baseline: 0.50, threshold: 0.54, family: "TOTALS_25", specificity: 1.0 };
   }
-  if (market === "OVER/UNDER 3.5") {
-    if (selection.startsWith("Under")) {
-      return { baseline: 0.72, threshold: 0.75, family: "TOTALS_35", specificity: 1.0 };
-    }
-    return { baseline: 0.28, threshold: 0.35, family: "TOTALS_35", specificity: 1.0 };
-  }
   if (market === "BTTS") {
+    // Only BTTS Yes is a core market; BTTS No is rejected
+    if (selection.toLowerCase().includes("no")) {
+      return { baseline: 1.0, threshold: 1.0, family: "EXCLUDED", specificity: 0 };
+    }
     return { baseline: 0.50, threshold: 0.54, family: "BTTS", specificity: 1.0 };
   }
-  return { baseline: 0.50, threshold: 0.54, family: market, specificity: 1.0 };
+  // All other markets (Double Chance, DNB, Over/Under 1.5, Over/Under 3.5) are strictly excluded from actionable selection
+  return { baseline: 1.0, threshold: 1.0, family: "EXCLUDED", specificity: 0 };
 }
 
 function candidateScore(candidate: MarketCandidate, votes: Vote[]) {
@@ -207,18 +204,33 @@ function candidateScore(candidate: MarketCandidate, votes: Vote[]) {
 }
 
 export function deriveConsensusActionability(result: AuthoritativeMatchAnalysis): QualificationResult {
-  const candidates = (result.marketCandidates ?? []).filter((c) => Number.isFinite(c.modelProbability));
+  const candidates = (result.marketCandidates ?? []).filter(
+    (c) =>
+      Number.isFinite(c.modelProbability) &&
+      isCoreActionableMarket(c.market, c.selection, result.home?.team, result.away?.team),
+  );
   if (!candidates.length) {
     const homeP = result.probabilities?.home ?? 0.33;
+    const drawP = result.probabilities?.draw ?? 0.33;
+    const awayP = result.probabilities?.away ?? 0.33;
+    let fallbackSel = `${result.home?.team || "Home"} Win`;
+    let fallbackProb = homeP;
+    if (drawP > homeP && drawP > awayP) {
+      fallbackSel = "Draw";
+      fallbackProb = drawP;
+    } else if (awayP > homeP && awayP >= drawP) {
+      fallbackSel = `${result.away?.team || "Away"} Win`;
+      fallbackProb = awayP;
+    }
     const fallback: MarketCandidate = {
       market: "1X2",
-      selection: `${result.home.team} Win`,
-      modelProbability: homeP,
-      fairOdds: Number((1 / Math.max(0.01, homeP)).toFixed(2)),
+      selection: fallbackSel,
+      modelProbability: fallbackProb,
+      fairOdds: Number((1 / Math.max(0.01, fallbackProb)).toFixed(2)),
       valueClassification: "NO_ODDS",
       qualificationStatus: "WATCH",
-      whyConsidered: "Fallback from the authoritative 1X2 probability surface.",
-      supportingEvidence: ["No separate market candidate surface was available."],
+      whyConsidered: "Fallback from the authoritative 1X2 core probability surface.",
+      supportingEvidence: ["No separate core market candidate surface was available."],
       contradictingEvidence: [],
     };
     return {
@@ -226,7 +238,7 @@ export function deriveConsensusActionability(result: AuthoritativeMatchAnalysis)
       actionableMarket: fallback,
       strongestMathematicalSignal: fallback,
       eligibilityPassed: false,
-      rejectionReasons: ["No valid market candidate probability surface was available."],
+      rejectionReasons: ["No valid core market candidate probability surface was available."],
       statusMessage: "INSUFFICIENT PROBABILITY SURFACE FOR ACTIONABLE SELECTION.",
     };
   }

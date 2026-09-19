@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { runMatchAnalysis } from "../match-analysis";
 
 test("Live Tavily sparse fixture production verification", async (t) => {
-  if (!process.env.TAVILY_API_KEY) {
-    t.skip("TAVILY_API_KEY not configured — skipping live Tavily API test");
+  if (!process.env.TAVILY_API_KEY || !process.env.RUN_LIVE_TESTS) {
+    t.skip("Live external network test skipped (set RUN_LIVE_TESTS=1 to run)");
     return;
   }
 
@@ -20,7 +20,7 @@ test("Live Tavily sparse fixture production verification", async (t) => {
     sourceId: "live-tavily-verify-1",
   };
 
-  const analysis = await runMatchAnalysis(sparseFixture.code, sparseFixture);
+  const analysis = await runMatchAnalysis(sparseFixture.code, sparseFixture, []);
 
   const tavilyItems = analysis.evidenceLedger.filter(
     (item) =>

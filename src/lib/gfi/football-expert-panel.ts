@@ -1,5 +1,6 @@
 import type { AuthoritativeMatchAnalysis, MarketCandidate } from "./authoritative";
 import type { MatchRow } from "./intelligence";
+import { isCoreActionableMarket } from "./markets";
 
 export type ExpertPanelDecision = "SUPPORT" | "CHALLENGE" | "REVALIDATE";
 export type ExpertPanelSeverity = "NORMAL" | "MINOR" | "SIGNIFICANT" | "SEVERE";
@@ -195,42 +196,54 @@ const n = (v: unknown, d = 0) => {
 const pct = (v: unknown) => Math.max(0, Math.min(100, n(v)));
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 export function marketSurface(a: AuthoritativeMatchAnalysis) {
-  const rows = (Array.isArray(a.marketCandidates) ? a.marketCandidates : [])
-    .filter((c: MarketCandidate) => Number.isFinite(c.modelProbability))
-    .map((c) => ({
-      market: c.market,
-      selection: c.selection,
-      probability: Math.round(c.modelProbability * 100),
-      qualification: c.qualificationStatus,
-    }));
-  const seen = new Set(rows.map((r) => `${r.market}|${r.selection}`));
-  for (const r of [
+  const o25Eng = a.engines?.find((e) => e.id === "TOTALS")?.values?.["over2.5"];
+  const bttsEng = a.engines?.find((e) => e.id === "BTTS")?.values?.yes;
+  const o25Candidate = a.marketCandidates?.find((c) => c.selection === "Over 2.5 Goals" || c.selection === "Over 2.5");
+  const bttsCandidate = a.marketCandidates?.find((c) => c.selection === "BTTS — YES" || c.selection === "BTTS Yes");
+
+  const o25Prob = o25Candidate?.modelProbability ?? (Number.isFinite(Number(o25Eng)) ? Number(o25Eng) : 0.5);
+  const bttsProb = bttsCandidate?.modelProbability ?? (Number.isFinite(Number(bttsEng)) ? Number(bttsEng) : 0.5);
+
+  const homeSel = `${a.home.team} Win`;
+  const drawSel = "Draw";
+  const awaySel = `${a.away.team} Win`;
+  const bttsSel = "BTTS — YES";
+  const o25Sel = "Over 2.5 Goals";
+
+  const rows = [
     {
-      market: "HOME",
-      selection: `${a.home.team} Win`,
-      probability: Math.round(a.probabilities.home * 100),
-      qualification: "MODEL",
+      market: "1X2",
+      selection: homeSel,
+      probability: Math.round((a.probabilities.home || 0) * 100),
+      qualification: a.qualification?.actionableMarket?.selection === homeSel ? "QUALIFIED" : "WATCH",
     },
     {
-      market: "DRAW",
-      selection: "Draw",
-      probability: Math.round(a.probabilities.draw * 100),
-      qualification: "MODEL",
+      market: "1X2",
+      selection: drawSel,
+      probability: Math.round((a.probabilities.draw || 0) * 100),
+      qualification: a.qualification?.actionableMarket?.selection === drawSel ? "QUALIFIED" : "WATCH",
     },
     {
-      market: "AWAY",
-      selection: `${a.away.team} Win`,
-      probability: Math.round(a.probabilities.away * 100),
-      qualification: "MODEL",
+      market: "1X2",
+      selection: awaySel,
+      probability: Math.round((a.probabilities.away || 0) * 100),
+      qualification: a.qualification?.actionableMarket?.selection === awaySel ? "QUALIFIED" : "WATCH",
     },
-  ]) {
-    const k = `${r.market}|${r.selection}`;
-    if (!seen.has(k)) {
-      rows.push(r);
-      seen.add(k);
-    }
-  }
-  return rows.sort((x, y) => y.probability - x.probability).slice(0, 32);
+    {
+      market: "BTTS",
+      selection: bttsSel,
+      probability: Math.round(bttsProb * 100),
+      qualification: a.qualification?.actionableMarket?.selection === bttsSel ? "QUALIFIED" : "WATCH",
+    },
+    {
+      market: "OVER/UNDER 2.5",
+      selection: o25Sel,
+      probability: Math.round(o25Prob * 100),
+      qualification: a.qualification?.actionableMarket?.selection === o25Sel ? "QUALIFIED" : "WATCH",
+    },
+  ];
+
+  return rows;
 }
 export const MANDATORY_SPECIALIST_DEFS = [
   { key: "teamStrengthScout", role: "Team Strength Scout", name: "Team Strength Scout" },
@@ -535,10 +548,23 @@ export function cleanPanel(
   const raw = value && typeof value === "object" ? value : {};
   const surface = marketSurface(a);
   const allowed = new Set(surface.map((x) => x.selection));
-  const requested = str(raw.analystCall?.selection || raw.marketReview?.selectedMarket);
+  let requested = str(raw.analystCall?.selection || raw.marketReview?.selectedMarket);
+  if (requested && !allowed.has(requested)) {
+    if (requested.toLowerCase().includes("btts") && (requested.toLowerCase().includes("yes") || requested.toLowerCase().includes("gg"))) {
+      requested = "BTTS — YES";
+    } else if (requested.toLowerCase().includes("over 2.5")) {
+      requested = "Over 2.5 Goals";
+    }
+  }
   if (requested && !allowed.has(requested)) rejectedAnything = true;
-  const q = surface[0]?.selection ?? a.finalPrediction;
-  const qProb = surface[0]?.probability ?? Math.round((a.probabilities.home || 0) * 100);
+  const qCandidate = a.qualification?.actionableMarket?.selection;
+  const q =
+    qCandidate && allowed.has(qCandidate)
+      ? qCandidate
+      : allowed.has(a.finalPrediction)
+        ? a.finalPrediction
+        : (surface[0]?.selection ?? `${a.home.team} Win`);
+  const qProb = surface.find((x) => x.selection === q)?.probability ?? Math.round((a.probabilities.home || 0) * 100);
 
   const completeness = validateCouncilCompleteness(raw, q);
   if (!completeness.isComplete) {
@@ -846,6 +872,13 @@ export function applyAnalystDecision(
     return { applied: false, reason: "Chair decision REVALIDATE — quantitative fallback preserved" };
   const s = p.analystCall.selection;
   if (!s) return { applied: false, reason: "No selection present on analyst call" };
+  const marketType = s.includes("2.5") ? "OVER/UNDER 2.5" : s.includes("BTTS") ? "BTTS" : "1X2";
+  if (!isCoreActionableMarket(marketType, s, a.home.team, a.away.team)) {
+    return {
+      applied: false,
+      reason: `AI Analyst selection "${s}" is not one of the five core actionable markets — quantitative fallback preserved`,
+    };
+  }
   const quantitativeLeaderBeforeAI = p.analystCall.quantitativeLeader;
   const safeAlternative = p.analystCall.safeAlternative || quantitativeLeaderBeforeAI;
   a.finalPrediction = s;
@@ -887,8 +920,15 @@ export async function runFootballExpertPanel(input: PanelInput): Promise<Footbal
     );
   const { fixture, analysis, evidenceFacts = [] } = input;
   const surface = marketSurface(analysis);
-  const qLeader = surface[0]?.selection ?? analysis.finalPrediction;
-  const qLeaderProb = surface[0]?.probability ?? Math.round((analysis.probabilities.home || 0) * 100);
+  const qCandidate = analysis.qualification?.actionableMarket?.selection;
+  const allowed = new Set(surface.map((x) => x.selection));
+  const qLeader =
+    qCandidate && allowed.has(qCandidate)
+      ? qCandidate
+      : allowed.has(analysis.finalPrediction)
+        ? analysis.finalPrediction
+        : (surface[0]?.selection ?? `${fixture.home} Win`);
+  const qLeaderProb = surface.find((x) => x.selection === qLeader)?.probability ?? Math.round((analysis.probabilities.home || 0) * 100);
   const packet = {
     fixture: {
       home: fixture.home,
@@ -937,22 +977,33 @@ export async function runFootballExpertPanel(input: PanelInput): Promise<Footbal
   const system = `You are the AI Football Analyst Council inside an institutional football-intelligence platform.
 You are an AI FOOTBALL ANALYST, NOT a probability sorter.
 
+=== HARD FIVE-MARKET CONTRACT: THE FIVE CORE ACTIONABLE MARKETS ONLY ===
+The analysis, expert council, and final decision are strictly restricted to five core markets:
+1. HOME WIN (e.g., "${fixture.home} Win")
+2. DRAW ("Draw")
+3. AWAY WIN (e.g., "${fixture.away} Win")
+4. GG / BTTS YES ("BTTS — YES")
+5. OVER 2.5 GOALS ("Over 2.5 Goals")
+
+Do NOT select, suggest, or propose any other market. Markets like Over 1.5, Under 2.5, Under 3.5, Over 3.5, BTTS No, Double Chance, or Draw No Bet are STRICTLY EXCLUDED and will be rejected.
+Your selection (analystCall.selection) MUST be exactly one of the 5 options provided in marketSurface.
+
 === SEPARATE THREE CRITICAL CONCEPTS ===
 1. STATISTICAL PROBABILITY: What does the quantitative engine calculate?
-   (e.g., Over 1.5 Goals = 82%, Home Win = 48%, BTTS = 58%).
+   (e.g., Over 2.5 Goals = 65%, Home Win = 48%, BTTS = 58%).
 2. FOOTBALL EXPECTATION: What does the actual football evidence indicate?
    (e.g., Opponent-adjusted strength gap, home venue dominance, tactical pressing mismatch, transition threat, defensive fragility).
 3. ACTIONABLE ANALYST CONCLUSION: What does the AI football analyst conclude is the most informative, decisive football call?
-   (e.g., Selecting "Home Win" when a team-strength mismatch exists, while preserving "Over 1.5 Goals" as the SAFE ALTERNATIVE).
+   (e.g., Selecting "Home Win" when a team-strength mismatch exists, while preserving "Over 2.5 Goals" as the SAFE ALTERNATIVE).
 
 === DO NOT DEFAULT TO THE SAFEST MARKET ===
-A market with 82% probability like "Over 1.5 Goals" is broad and non-directional.
-Do NOT treat Over 1.5 as automatically superior to Home Win (48%), Away Win, or BTTS simply because 82 > 48.
+A market like "Over 2.5 Goals" or "BTTS — YES" can be broad and non-directional.
+Do NOT treat Over 2.5 as automatically superior to Home Win, Away Win, or Draw simply because of raw percentage.
 They answer completely different football questions:
-- "Over 1.5 Goals" asks: "Will at least 2 goals be scored in total?"
+- "Over 2.5 Goals" asks: "Will at least 3 goals be scored in total?"
 - "Home Win" asks: "Will the home team win the match?"
 When football evidence shows a clear opponent-adjusted strength advantage, tactical dominance, or recent trajectory favoring one side, the directional conclusion (Home Win / Away Win / Draw) is far more informative.
-Conversely, do NOT force directional markets if the evidence does not support one. If both sides are evenly matched or volatile, BTTS or a totals market (Over/Under) is the legitimate football conclusion.
+Conversely, do NOT force directional markets if the evidence does not support one. If both sides are evenly matched or volatile, BTTS or Over 2.5 Goals is the legitimate football conclusion.
 
 === EIGHT SPECIALISTS WITH DISTINCT MANDATES ===
 1. TEAM STRENGTH SCOUT:

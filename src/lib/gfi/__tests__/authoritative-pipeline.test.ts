@@ -11,6 +11,7 @@ import {
 import { analyzeActiveAuthoritatively } from "../authoritative-runtime.ts";
 import { bestQualifiedMarket, buildMainstreamMarketMap } from "../market-map.ts";
 import { analyzeFreeMatch, runMatchAnalysis } from "../match-analysis.ts";
+import { analyzeLoadedFixture } from "../server-pipeline.ts";
 import type { AuthoritativeMatchAnalysis, MatchRow } from "../intelligence.ts";
 
 test("1. Score Parsing: blank/empty/whitespace score cells return undefined, never 0", () => {
@@ -448,38 +449,49 @@ test("12. Web Evidence Integration: Sparse fixture end-to-end analysis executes 
     sourceId: "sparse-test",
   };
 
-  const analysis = await runMatchAnalysis(sparseFixture.code, sparseFixture);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })) as typeof fetch;
 
-  assert.ok(analysis, "Analysis must return a result");
-  assert.equal(analysis.home.team, "Chapecoense");
-  assert.equal(analysis.away.team, "Operario Ferroviario");
-  assert.ok(analysis.probabilities, "Probabilities must be generated");
-  assert.ok(typeof analysis.probabilities.home === "number");
-  assert.ok(typeof analysis.probabilities.draw === "number");
-  assert.ok(typeof analysis.probabilities.away === "number");
-  assert.ok(Array.isArray(analysis.evidenceLedger), "evidenceLedger must be an array");
+  try {
+    const analysis = await runMatchAnalysis(sparseFixture.code, sparseFixture, []);
 
-  for (const item of analysis.evidenceLedger) {
-    assert.ok(
-      typeof item.id === "string" && item.id.length > 0,
-      "EvidenceItem.id must be a string",
-    );
-    assert.ok(
-      item.source === "FREE_RESULTS" ||
-        item.source === "DERIVED_MODEL" ||
-        item.source === "OPTIONAL_PROVIDER",
-      `EvidenceItem.source must be a valid source type, got: ${item.source}`,
-    );
-    assert.ok(
-      typeof item.statement === "string" && item.statement.length > 0,
-      "EvidenceItem.statement must be a non-empty string",
-    );
-    assert.ok(
-      typeof item.quality === "number" && item.quality >= 0 && item.quality <= 100,
-      "EvidenceItem.quality must be a number between 0 and 100",
-    );
+    assert.ok(analysis, "Analysis must return a result");
+    assert.equal(analysis.home.team, "Chapecoense");
+    assert.equal(analysis.away.team, "Operario Ferroviario");
+    assert.ok(analysis.probabilities, "Probabilities must be generated");
+    assert.ok(typeof analysis.probabilities.home === "number");
+    assert.ok(typeof analysis.probabilities.draw === "number");
+    assert.ok(typeof analysis.probabilities.away === "number");
+    assert.ok(Array.isArray(analysis.evidenceLedger), "evidenceLedger must be an array");
+
+    for (const item of analysis.evidenceLedger) {
+      assert.ok(
+        typeof item.id === "string" && item.id.length > 0,
+        "EvidenceItem.id must be a string",
+      );
+      assert.ok(
+        item.source === "FREE_RESULTS" ||
+          item.source === "DERIVED_MODEL" ||
+          item.source === "OPTIONAL_PROVIDER",
+        `EvidenceItem.source must be a valid source type, got: ${item.source}`,
+      );
+      assert.ok(
+        typeof item.statement === "string" && item.statement.length > 0,
+        "EvidenceItem.statement must be a non-empty string",
+      );
+      assert.ok(
+        typeof item.quality === "number" && item.quality >= 0 && item.quality <= 100,
+        "EvidenceItem.quality must be a number between 0 and 100",
+      );
+    }
+
+    assert.ok(analysis.aiReasoningPacket, "aiReasoningPacket must exist");
+    assert.ok(analysis.aiReasoningPacket.research, "aiReasoningPacket.research must exist");
+  } finally {
+    globalThis.fetch = originalFetch;
   }
-
-  assert.ok(analysis.aiReasoningPacket, "aiReasoningPacket must exist");
-  assert.ok(analysis.aiReasoningPacket.research, "aiReasoningPacket.research must exist");
 });

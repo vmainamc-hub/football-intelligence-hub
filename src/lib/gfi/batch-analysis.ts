@@ -52,16 +52,13 @@ function parseIntent(raw: string): BatchIntent {
   const text = normalizeText(raw), count = parseCount(text), isNext = /\bnext\b/.test(text);
   const mode: BatchIntent["mode"] = /\b(safest|safe)\b/.test(text) ? "SAFEST" : /\bslip\b/.test(text) ? "SLIP" : /\bhome\b/.test(text) && !/\baway\b/.test(text) ? "HOME" : /\baway\b/.test(text) ? "AWAY" : /\bdraw\b/.test(text) ? "DRAW" : "ACTIONABLE";
   let market: BatchIntent["market"]; let marketSelection: string | undefined;
-  if (/\b(gg|btts yes|both teams to score)\b/.test(text)) { market = "BTTS"; marketSelection = "BTTS — YES"; }
-  else if (/\bbtts no\b/.test(text)) { market = "BTTS"; marketSelection = "BTTS — NO"; }
-  else if (/\bover\s*1\.5\b/.test(text)) { market = "OVER/UNDER 1.5"; marketSelection = "Over 1.5 Goals"; }
-  else if (/\bunder\s*1\.5\b/.test(text)) { market = "OVER/UNDER 1.5"; marketSelection = "Under 1.5 Goals"; }
-  else if (/\bover\s*2\.5\b/.test(text)) { market = "OVER/UNDER 2.5"; marketSelection = "Over 2.5 Goals"; }
-  else if (/\bunder\s*2\.5\b/.test(text)) { market = "OVER/UNDER 2.5"; marketSelection = "Under 2.5 Goals"; }
-  else if (/\bover\s*3\.5\b/.test(text)) { market = "OVER/UNDER 3.5"; marketSelection = "Over 3.5 Goals"; }
-  else if (/\bunder\s*3\.5\b/.test(text)) { market = "OVER/UNDER 3.5"; marketSelection = "Under 3.5 Goals"; }
-  else if (/\bdouble chance\b/.test(text)) market = "DOUBLE CHANCE";
-  else if (/\b(draw no bet|dnb)\b/.test(text)) market = "DRAW NO BET";
+  if (/\b(gg|btts yes|both teams to score)\b/.test(text) && !/\bbtts no\b/.test(text)) {
+    market = "BTTS";
+    marketSelection = "BTTS — YES";
+  } else if (/\bover\s*2\.5\b/.test(text)) {
+    market = "OVER/UNDER 2.5";
+    marketSelection = "Over 2.5 Goals";
+  }
   const scope: BatchIntent["scope"] = isNext || !/\b(today|todays|today's)\b/.test(text) ? "NEXT" : "TODAY";
   return { raw, count, scope, mode: market ? "MARKET" : mode, market, marketSelection };
 }

@@ -504,19 +504,8 @@ export function analyzeActiveAuthoritatively(
     { market: "HOME", label: `${base.home.team} win`, probability: p.home, strength: Math.max(0, (p.home - 0.40) / 0.60) },
     { market: "DRAW", label: "Draw", probability: p.draw, strength: Math.max(0, (p.draw - 0.27) / 0.73) },
     { market: "AWAY", label: `${base.away.team} win`, probability: p.away, strength: Math.max(0, (p.away - 0.40) / 0.60) },
-    { market: "DOUBLE CHANCE", label: `${base.home.team} or Draw (1X)`, probability: p.home + p.draw, strength: Math.max(0, (p.home + p.draw - 0.67) / 0.33) },
-    { market: "DOUBLE CHANCE", label: `Draw or ${base.away.team} (X2)`, probability: p.draw + p.away, strength: Math.max(0, (p.draw + p.away - 0.67) / 0.33) },
-    { market: "DOUBLE CHANCE", label: `${base.home.team} or ${base.away.team} (12)`, probability: p.home + p.away, strength: Math.max(0, (p.home + p.away - 0.67) / 0.33) },
-    { market: "DRAW NO BET", label: `${base.home.team} DNB`, probability: dnbHome, strength: Math.max(0, (dnbHome - 0.50) / 0.50) },
-    { market: "DRAW NO BET", label: `${base.away.team} DNB`, probability: dnbAway, strength: Math.max(0, (dnbAway - 0.50) / 0.50) },
-    { market: "OVER 1.5", label: "Over 1.5", probability: totalValues["over1.5"], strength: Math.max(0, (totalValues["over1.5"] - 0.74) / 0.26) },
-    { market: "UNDER 1.5", label: "Under 1.5", probability: 1 - totalValues["over1.5"], strength: Math.max(0, (1 - totalValues["over1.5"] - 0.26) / 0.74) },
-    { market: "OVER 2.5", label: "Over 2.5", probability: totalValues["over2.5"], strength: Math.max(0, (totalValues["over2.5"] - 0.50) / 0.50) },
-    { market: "UNDER 2.5", label: "Under 2.5", probability: 1 - totalValues["over2.5"], strength: Math.max(0, (1 - totalValues["over2.5"] - 0.50) / 0.50) },
-    { market: "OVER 3.5", label: "Over 3.5", probability: totalValues["over3.5"], strength: Math.max(0, (totalValues["over3.5"] - 0.28) / 0.72) },
-    { market: "UNDER 3.5", label: "Under 3.5", probability: 1 - totalValues["over3.5"], strength: Math.max(0, (1 - totalValues["over3.5"] - 0.72) / 0.28) },
     { market: "BTTS", label: "BTTS — YES", probability: yes, strength: Math.max(0, (yes - 0.50) / 0.50) },
-    { market: "BTTS", label: "BTTS — NO", probability: 1 - yes, strength: Math.max(0, (1 - yes - 0.50) / 0.50) },
+    { market: "OVER 2.5", label: "Over 2.5", probability: totalValues["over2.5"], strength: Math.max(0, (totalValues["over2.5"] - 0.50) / 0.50) },
   ]
     .filter((x) => Number.isFinite(x.probability))
     .sort((a, b) => b.strength - a.strength)

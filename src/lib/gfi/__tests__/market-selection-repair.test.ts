@@ -152,7 +152,7 @@ test("5. Correlation awareness: goals engine family is aggregated into one vote"
   );
 });
 
-test("6. Complete 7-market surface is evaluated and candidate pool has diverse options", () => {
+test("6. Authoritative five core markets surface is evaluated and candidate pool conforms to contract", () => {
   const fixture: MatchRow = {
     date: "2026-03-05",
     home: "Arsenal",
@@ -164,14 +164,13 @@ test("6. Complete 7-market surface is evaluated and candidate pool has diverse o
 
   const marketNames = new Set(marketMap.map((m) => m.market));
   assert.ok(marketNames.has("1X2"), "1X2 must be evaluated");
-  assert.ok(marketNames.has("DOUBLE CHANCE"), "DOUBLE CHANCE must be evaluated");
-  assert.ok(marketNames.has("DRAW NO BET"), "DRAW NO BET must be evaluated");
-  assert.ok(marketNames.has("OVER/UNDER 1.5"), "OVER/UNDER 1.5 must be evaluated");
   assert.ok(marketNames.has("OVER/UNDER 2.5"), "OVER/UNDER 2.5 must be evaluated");
-  assert.ok(marketNames.has("OVER/UNDER 3.5"), "OVER/UNDER 3.5 must be evaluated");
   assert.ok(marketNames.has("BTTS"), "BTTS must be evaluated");
+  // Non-core markets must not be in mainstream market map
+  assert.equal(marketNames.has("DOUBLE CHANCE" as any), false, "DOUBLE CHANCE must not be in core surface");
+  assert.equal(marketNames.has("DRAW NO BET" as any), false, "DRAW NO BET must not be in core surface");
 
-  assert.ok(result.marketCandidates.length >= 10, "Candidate pool must contain comprehensive market selections");
+  assert.equal(result.marketCandidates.length, 5, "Candidate pool must contain exactly the 5 core market selections");
 });
 
 test("7. Single and UI consumption parity: bestQualifiedMarket mirrors actionableMarket exactly", () => {

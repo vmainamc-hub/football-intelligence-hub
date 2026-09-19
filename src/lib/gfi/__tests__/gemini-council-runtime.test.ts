@@ -19,7 +19,7 @@ function createMockAnalysis(overrides?: Partial<AuthoritativeMatchAnalysis>): Au
     away: { team: "Chelsea", goals: 1.1, lambda: 1.1 },
     probabilities: { home: 0.58, draw: 0.24, away: 0.18 },
     decision: "HOME EDGE",
-    finalPrediction: "Over 1.5 Goals",
+    finalPrediction: "Over 2.5 Goals",
     predictedScore: "2-1",
     confidence: 76,
     quality: 82,
@@ -27,9 +27,9 @@ function createMockAnalysis(overrides?: Partial<AuthoritativeMatchAnalysis>): Au
     consensus: { agreement: 0.85, conflict: 0.15 },
     qualification: {
       actionableMarket: {
-        market: "OVER/UNDER 1.5",
-        selection: "Over 1.5 Goals",
-        label: "Over 1.5 Goals",
+        market: "OVER/UNDER 2.5",
+        selection: "Over 2.5 Goals",
+        label: "Over 2.5 Goals",
         modelProbability: 0.82,
         expectedValue: 0.12,
         actionabilityScore: 84,
@@ -38,8 +38,8 @@ function createMockAnalysis(overrides?: Partial<AuthoritativeMatchAnalysis>): Au
         supportingEvidence: ["Poisson expectation 3.2 goals"],
       },
       rankedActionable: [],
-      evaluatedCount: 7,
-      disqualifiedCount: 2,
+      evaluatedCount: 5,
+      disqualifiedCount: 0,
     },
     engines: [
       {
@@ -177,8 +177,8 @@ test("1. Missing API Key returns explicit GEMINI CONFIGURATION MISSING fallback"
     assert.equal(result.provider, "NONE");
     assert.match(result.chair.summary, /GEMINI CONFIGURATION MISSING/);
     assert.equal(result.analystCall.status, "FALLBACK");
-    assert.equal(result.analystCall.selection, "Over 1.5 Goals");
-    assert.equal(analysis.finalPrediction, "Over 1.5 Goals"); // Quantitative intact
+    assert.equal(result.analystCall.selection, "Over 2.5 Goals");
+    assert.equal(analysis.finalPrediction, "Over 2.5 Goals"); // Quantitative intact
   } finally {
     if (origKey) process.env.GEMINI_API_KEY = origKey;
     if (origGoogleKey) process.env.GOOGLE_API_KEY = origGoogleKey;
@@ -373,11 +373,11 @@ test("5. All attempts fail -> Graceful quantitative fallback with diagnostic his
   assert.equal(result.provider, "NONE");
   assert.match(result.chair.summary, /AI council unavailable after 3 attempt\(s\)/);
   assert.equal(result.analystCall.status, "FALLBACK");
-  assert.equal(result.analystCall.selection, "Over 1.5 Goals");
+  assert.equal(result.analystCall.selection, "Over 2.5 Goals");
   assert.equal(result.diagnostics?.attempts.length, 3);
   assert.equal(result.diagnostics?.finalStatus, "ALL_ATTEMPTS_FAILED");
   // Quantitative prediction maintained
-  assert.equal(analysis.finalPrediction, "Over 1.5 Goals");
+  assert.equal(analysis.finalPrediction, "Over 2.5 Goals");
 });
 
 test("6. Robust parsing: handles markdown code block formatting safely", () => {
@@ -394,7 +394,7 @@ test("6. Robust parsing: handles markdown code block formatting safely", () => {
 
 test("7. AI Decision Authority: Divergence from quantitative leader is respected", () => {
   const analysis = createMockAnalysis({
-    finalPrediction: "Over 1.5 Goals", // Quant leader
+    finalPrediction: "Over 2.5 Goals", // Quant leader
   });
   const { panel } = cleanPanel(validCouncilPayload, "gemini-3.8-flash", analysis);
   const appResult = applyAnalystDecision(analysis, panel);
@@ -403,12 +403,12 @@ test("7. AI Decision Authority: Divergence from quantitative leader is respected
   assert.equal(analysis.finalPrediction, "Arsenal Win");
   assert.equal(analysis.decision, "HOME EDGE");
   assert.equal(analysis.aiReasoningPacket?.aiDecisionAuthority, true);
-  assert.equal(analysis.aiReasoningPacket?.quantitativeLeaderBeforeAI, "Over 1.5 Goals");
+  assert.equal(analysis.aiReasoningPacket?.quantitativeLeaderBeforeAI, "Over 2.5 Goals");
 });
 
 test("8. AI cannot invent invalid market outside market surface", () => {
   const analysis = createMockAnalysis({
-    finalPrediction: "Over 1.5 Goals",
+    finalPrediction: "Over 2.5 Goals",
   });
   const payloadWithInventedMarket = {
     ...validCouncilPayload,
@@ -423,7 +423,7 @@ test("8. AI cannot invent invalid market outside market surface", () => {
   assert.equal(rejectedAnything, true);
   // Falls back to allowable market from surface
   assert.notEqual(panel.analystCall.selection, "Arsenal to Win and Over 5.5 Corners and 12 Fouls");
-  assert.ok(["Over 1.5 Goals", "Arsenal Win"].includes(panel.analystCall.selection));
+  assert.ok(["Over 2.5 Goals", "Arsenal Win"].includes(panel.analystCall.selection));
 });
 
 test("9. Integrity Guardrail: Plymouth vs Real Madrid (team strength mismatch / identity revalidation)", () => {

@@ -27,6 +27,7 @@ function createMockSupabaseAdminClient() {
   const noOpQuery: any = {
     select: () => noOpQuery,
     insert: () => Promise.resolve({ data: null, error: null }),
+    upsert: () => Promise.resolve({ data: null, error: null }),
     update: () => Promise.resolve({ data: null, error: null }),
     delete: () => Promise.resolve({ data: null, error: null }),
     eq: () => noOpQuery,
